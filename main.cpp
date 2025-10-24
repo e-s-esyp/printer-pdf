@@ -87,9 +87,6 @@ private slots:
         // if (!printer.supportedPageSizes().contains(QPageSize::A5)) {
         // qDebug() << "A5 not supported, using default";
         // }
-        QPageLayout pageLayout;
-        pageLayout.setPageSize(QPageSize(QPageSize::A5));
-        printer.setPageLayout(pageLayout);
 
         // Настраиваем параметры печати по умолчанию
         // printer.setOutputFormat(OutputFormat format);
@@ -114,7 +111,7 @@ private slots:
         printer.setColorMode(QPrinter::Color);
         printer.setCollateCopies(true);
         printer.setFullPage(true);
-        printer.setCopyCount(2); //setNumCopies
+        printer.setCopyCount(1); //setNumCopies
         // printer.setPaperSource
         printer.setDuplex(QPrinter::DuplexMode::DuplexNone); //setDoubleSidedPrinting
         // printer.setFontEmbeddingEnabled
@@ -124,6 +121,14 @@ private slots:
         // printer.setPageMargins(QMarginsF, QPageLayout::Unit)
         // printer.setEngines(QPrintEngine *printEngine, QPaintEngine *paintEngine);
 
+        // Создаем layout с миллиметрами
+        QPageLayout pageLayout;
+        pageLayout.setPageSize(QPageSize(QPageSize::A4)); // не работает
+        pageLayout.setUnits(QPageLayout::Millimeter);  // Устанавливаем мм как единицы измерения
+        pageLayout.setMargins(QMarginsF(10, 10, 10, 10)); // Отступы в мм
+
+        // Применяем layout к принтеру
+        printer.setPageLayout(pageLayout);
 
         QPrintDialog printDialog(&printer, this);
         printDialog.setWindowTitle("Печать документа");

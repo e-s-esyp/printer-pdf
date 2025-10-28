@@ -6,7 +6,6 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-
 find_package(Qt5 COMPONENTS
         Core
         Gui
@@ -15,7 +14,7 @@ find_package(Qt5 COMPONENTS
         Pdf
         PdfWidgets
         REQUIRED)
-
+#qt5_wrap_cpp(MAIN_MOC main.cpp)
 add_executable(example main.cpp)
 target_link_libraries(example
         Qt5::Core

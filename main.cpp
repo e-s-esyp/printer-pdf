@@ -123,17 +123,7 @@ private slots:
         document.setPlainText(text);
 
         // Настраиваем форматирование с учетом A4 и 300dpi
-        // Размер A4 в точках: 595 x 842 точек (при 72 dpi)
-        // При 300 dpi нужно пересчитать размер шрифта
-        // Коэффициент: 300 / 72 = 4.1667
-        // Стандартный шрифт 12pt при 300dpi будет эквивалентен 12 * 4.1667 = 50px
-        // Но мы будем использовать физические размеры
-
-        // Расчет размера шрифта на основе физических размеров
-        // A4: 210x297 мм, стандартный шрифт для документов ~10-12pt
-        // При 300dpi: 1pt = 1/72 inch = 300/72 = 4.1667 pixels
-        // Используем 12pt = 12 * 4.1667 ≈ 50px
-        QFont font("Times", 12); // 12pt для основного текста
+        QFont font("Times", 50); // 12pt для основного текста
         document.setDefaultFont(font);
 
         QTextOption textOption;
@@ -159,6 +149,11 @@ private slots:
         qreal height = document.documentLayout()->documentSize().height();
         int pages = qCeil(height / pageRect.height());
 
+        // Настройки для нумерации страниц
+        QFont pageNumberFont("Times", 10);
+        QFontMetrics pageNumberMetrics(pageNumberFont);
+        int pageNumberHeight = pageNumberMetrics.height();
+
         for (int i = 0; i < pages; ++i) {
             if (i > 0) {
                 pdfWriter.newPage();
@@ -174,7 +169,28 @@ private slots:
 
             // Рисуем содержимое документа
             document.drawContents(&painter);
+
+            // Восстанавливаем состояние painter для рисования номера страницы
             painter.restore();
+
+            // Добавляем номер страницы, если страниц больше одной
+            if (pages > 1) {
+                painter.save();
+                painter.setFont(pageNumberFont);
+
+                // Позиция для номера страницы (внизу по центру)
+                QString pageNumber = QString("%1 / %2").arg(i + 1).arg(pages);
+                int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
+
+                QPointF pageNumberPos(
+                    (pageRect.width() - pageNumberWidth) / 2,
+                    (i + 1) * pageRect.height() - pageNumberHeight - 20
+                    // 20px от нижнего края
+                );
+
+                painter.drawText(pageNumberPos, pageNumber);
+                painter.restore();
+            }
         }
 
         painter.end();
@@ -354,7 +370,9 @@ private:
         m_splitter->addWidget(m_pdfView);
 
         // Устанавливаем начальные пропорции (50/50)
-        m_splitter->setSizes({1, 1});
+        // m_splitter->setSizes({1, 3});
+        m_splitter->setStretchFactor(0, 10);
+        m_splitter->setStretchFactor(1, 25);
 
         auto *createButton = new QPushButton("Создать PDF");
         auto *openButton = new QPushButton("Открыть PDF");
@@ -374,7 +392,8 @@ private:
         m_printButton = printButton;
 
         setWindowTitle("PDF приложение Qt5");
-        resize(1200, 600); // Увеличиваем начальный размер окна для горизонтального расположения
+        resize(1200, 600);
+        // Увеличиваем начальный размер окна для горизонтального расположения
     }
 
     void setupConnections() {

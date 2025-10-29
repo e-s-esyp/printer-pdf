@@ -20,6 +20,7 @@
 #include <QTimer>
 #include <QSpinBox>
 #include <QLabel>
+#include <QPdfPageNavigation>
 #include <QDebug>
 
 #define QD qDebug()
@@ -148,21 +149,20 @@ class DetailedEventTracker : public QObject {
             /* 132 */ "Win event activation"
         };
 
-        const int arraySize = sizeof(eventNames) / sizeof(eventNames[0]);
+        constexpr int arraySize = sizeof(eventNames) / sizeof(eventNames[0]);
 
         if (type >= 0 && type < arraySize && eventNames[type] != nullptr) {
             return eventNames[type];
-        } else {
-            static char unknownBuffer[64];
-            snprintf(unknownBuffer, sizeof(unknownBuffer), "Unknown event (%d)", type);
-            return unknownBuffer;
         }
+        static char unknownBuffer[64];
+        snprintf(unknownBuffer, sizeof(unknownBuffer), "Unknown event (%d)", type);
+        return unknownBuffer;
     }
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override {
-        QString className = obj ? obj->metaObject()->className() : "null";
-        QString objName = obj ? obj->objectName() : "unnamed";
+        const QString className = obj ? obj->metaObject()->className() : "null";
+        const QString objName = obj ? obj->objectName() : "unnamed";
         const char *eventDescription = eventTypeToString(event->type());
         qDebug().noquote()
                 << "Time:" << QTime::currentTime().toString("hh:mm:ss.zzz")
@@ -204,12 +204,11 @@ public:
         qDebug() << "Режим масштабирования:" << m_pdfView->zoomMode();
         qDebug() << "Масштаб:" << m_pdfView->zoomFactor();
         qDebug() << "Режим страниц:" << m_pdfView->pageMode();
-
         qDebug() << "Количество страниц в документе:" << m_document.pageCount();
         qDebug() << "Статус документа:" << m_document.status();
 
         // Проверяем родительскую иерархию
-        QWidget *parent = m_pdfView;
+        const QWidget *parent = m_pdfView;
         while (parent) {
             qDebug() << "Виджет:" << parent->objectName()
                     << "Размер:" << parent->size()
@@ -228,15 +227,17 @@ public:
         _debugPdfView();
     }
 
-    void updatePageNavigation() {
+    void updatePageNavigation() const {
         const int pageCount = m_document.pageCount();
         m_pageSpinBox->setRange(1, qMax(1, pageCount));
         m_pageCountLabel->setText(QString(" / %1").arg(pageCount));
-
-        // Если документ загружен, устанавливаем первую страницу
-        if (pageCount > 0 && m_pdfView->pageNavigator()->currentPage() != 0) {
-            m_pdfView->pageNavigator()->jump(0, QPointF(), 0);
+        // В Qt 5.15 используем pageNavigation()
+        if (pageCount > 0) {
+            // Устанавливаем первую страницу
+            m_pdfView->pageNavigation()->setCurrentPage(0);
         }
+        // Активируем/деактивируем спинбокс в зависимости от наличия страниц
+        m_pageSpinBox->setEnabled(pageCount > 0);
     }
 
     static void _saveImage(QPdfDocument *document) {
@@ -245,7 +246,9 @@ public:
             if (!image.isNull()) {
                 qDebug() << "Первая страница успешно отрендерена. Размер:"
                         << image.size();
-                auto r = image.save("debug_page.png");
+                if (!image.save("debug_page.png")) {
+
+                }
             } else {
                 qDebug() << "Не удалось отрендерить первую страницу.";
             }
@@ -311,7 +314,7 @@ private slots:
         painter.end();
         m_buffer.close();
         // Загружаем данные в QPdfDocument.
-        // m_document.close(); // не нужно
+        // m_document.close();
         // Открываем буфер для чтения
         if (!m_buffer.open(QIODevice::ReadOnly)) {
             QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для чтения");
@@ -321,8 +324,6 @@ private slots:
         QD << m_document.status();
         // m_buffer.seek(0); // не нужно
         m_document.load(&m_buffer);
-        // QCoreApplication::processEvents(); // не нужно
-        // m_buffer.close(); // нельзя!!!
         // Обновляем навигацию по страницам
         updatePageNavigation();
         QD << "done";
@@ -351,6 +352,7 @@ private slots:
         pageLayout.setMargins(QMarginsF(10, 10, 10, 10)); // Отступы в мм
         pageLayout.setOrientation(QPageLayout::Orientation::Portrait);
         printer.setPageLayout(pageLayout);
+        // ReSharper disable once CppDeprecatedEntity
         QD << printer.pageSize();
         QD << printer.pageLayout().pageSize().id();
 
@@ -428,16 +430,17 @@ private slots:
         }
     }
 
-    void onPageChanged(int page) {
+    void onPageChanged(const int page) const {
         // page в spinbox начинается с 1, а в QPdfView с 0
         const int pageIndex = page - 1;
         if (pageIndex >= 0 && pageIndex < m_document.pageCount()) {
-            m_pdfView->pageNavigator()->jump(pageIndex, QPointF(), 0);
+            // В Qt 5.15 используем pageNavigation()
+            m_pdfView->pageNavigation()->setCurrentPage(pageIndex);
         }
     }
 
-    void onCurrentPageChanged(int page) {
-        // Блокируем сигналы чтобы избежать рекурсии
+    void onCurrentPageChanged(const int page) const {
+        // Блокируем сигналы, чтобы избежать рекурсии
         m_pageSpinBox->blockSignals(true);
         m_pageSpinBox->setValue(page + 1); // Конвертируем из 0-based в 1-based
         m_pageSpinBox->blockSignals(false);
@@ -515,7 +518,9 @@ private:
                 });
 
         connect(&m_document, &QPdfDocument::pageCountChanged, this, &PdfApp::updatePageNavigation);
-        connect(m_pdfView->pageNavigator(), &QPdfPageNavigator::currentPageChanged,
+
+        // В Qt 5.15 используем pageNavigation() вместо pageNavigator()
+        connect(m_pdfView->pageNavigation(), &QPdfPageNavigation::currentPageChanged,
                 this, &PdfApp::onCurrentPageChanged);
     }
 
@@ -528,6 +533,8 @@ private:
         }
     }
 };
+
+// ... остальной код без изменений (myMessageHandler, main и т.д.)
 #ifdef Q_OS_UNIX
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -617,6 +624,8 @@ void myMessageHandler(const QtMsgType type, const QMessageLogContext &context,
             .arg(context.line).arg(QString(context.function), msg).arg(tid);
     fprintf(stderr, "%s\n", formattedMsg.toLocal8Bit().constData());
     fflush(stderr);
+    // if (type == QtFatalMsg)
+    // abort();
 }
 
 int main(int argc, char *argv[]) {

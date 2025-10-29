@@ -23,6 +23,7 @@
 #include <QPdfPageNavigation>
 #include <QPlainTextDocumentLayout>
 #include <qmath.h>
+#include <QSplitter>
 #include <QDebug>
 
 #define QD qDebug()
@@ -45,6 +46,7 @@ class PdfApp final : public QMainWindow {
     QHBoxLayout *pageNavigationLayout{};
     QSpinBox *m_pageSpinBox{};
     QLabel *m_pageCountLabel{};
+    QSplitter *m_splitter{};
     QBuffer m_buffer{};
     QByteArray m_pdfData;
     QPdfDocument m_document;
@@ -120,8 +122,18 @@ private slots:
         QTextDocument document;
         document.setPlainText(text);
 
-        // Настраиваем форматирование
-        QFont font("Times", 14);
+        // Настраиваем форматирование с учетом A4 и 300dpi
+        // Размер A4 в точках: 595 x 842 точек (при 72 dpi)
+        // При 300 dpi нужно пересчитать размер шрифта
+        // Коэффициент: 300 / 72 = 4.1667
+        // Стандартный шрифт 12pt при 300dpi будет эквивалентен 12 * 4.1667 = 50px
+        // Но мы будем использовать физические размеры
+
+        // Расчет размера шрифта на основе физических размеров
+        // A4: 210x297 мм, стандартный шрифт для документов ~10-12pt
+        // При 300dpi: 1pt = 1/72 inch = 300/72 = 4.1667 pixels
+        // Используем 12pt = 12 * 4.1667 ≈ 50px
+        QFont font("Times", 12); // 12pt для основного текста
         document.setDefaultFont(font);
 
         QTextOption textOption;
@@ -132,6 +144,9 @@ private slots:
         // Устанавливаем размер страницы
         QRectF pageRect = pdfWriter.pageLayout().paintRectPixels(pdfWriter.resolution());
         document.setTextWidth(pageRect.width()); // Важно: устанавливаем ширину текста
+
+        // Добавляем отступы
+        document.setDocumentMargin(50); // 50px отступы
 
         QPainter painter;
         if (!painter.begin(&pdfWriter)) {
@@ -318,12 +333,28 @@ private:
         pageNavigationLayout->addWidget(m_pageSpinBox);
         pageNavigationLayout->addWidget(m_pageCountLabel);
         pageNavigationLayout->addStretch();
+        QWidget *pageNavigationWidget = new QWidget();
+        pageNavigationWidget->setLayout(pageNavigationLayout);
+        pageNavigationWidget->setMaximumHeight(40);
+
+        // Создаем splitter для горизонтального расположения
+        m_splitter = new QSplitter(Qt::Horizontal, centralWidget);
 
         m_textEdit = new QTextEdit();
         m_textEdit->setPlaceholderText("Введите текст для создания PDF...");
+        // Устанавливаем шрифт соответствующий PDF
+        QFont textEditFont("Times", 12);
+        m_textEdit->setFont(textEditFont);
 
         m_pdfView = new QPdfView();
         m_pdfView->setDocument(&m_document);
+
+        // Добавляем виджеты в splitter
+        m_splitter->addWidget(m_textEdit);
+        m_splitter->addWidget(m_pdfView);
+
+        // Устанавливаем начальные пропорции (50/50)
+        m_splitter->setSizes({1, 1});
 
         auto *createButton = new QPushButton("Создать PDF");
         auto *openButton = new QPushButton("Открыть PDF");
@@ -332,11 +363,10 @@ private:
         buttonLayout->addWidget(createButton);
         buttonLayout->addWidget(openButton);
         buttonLayout->addWidget(printButton);
+        buttonLayout->addWidget(pageNavigationWidget);
 
         mainLayout->addLayout(buttonLayout);
-        mainLayout->addLayout(pageNavigationLayout);
-        mainLayout->addWidget(m_textEdit);
-        mainLayout->addWidget(m_pdfView);
+        mainLayout->addWidget(m_splitter); // Добавляем splitter вместо отдельных виджетов
 
         // Сохраняем указатели на кнопки для соединений
         m_createButton = createButton;
@@ -344,7 +374,7 @@ private:
         m_printButton = printButton;
 
         setWindowTitle("PDF приложение Qt5");
-        resize(800, 600);
+        resize(1200, 600); // Увеличиваем начальный размер окна для горизонтального расположения
     }
 
     void setupConnections() {
@@ -472,8 +502,6 @@ void myMessageHandler(const QtMsgType type, const QMessageLogContext &context,
             .arg(context.line).arg(QString(context.function), msg).arg(tid);
     fprintf(stderr, "%s\n", formattedMsg.toLocal8Bit().constData());
     fflush(stderr);
-    // if (type == QtFatalMsg)
-    // abort();
 }
 
 int main(int argc, char *argv[]) {

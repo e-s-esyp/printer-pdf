@@ -122,8 +122,8 @@ private slots:
         QTextDocument document;
         document.setPlainText(text);
 
-        // Настраиваем форматирование с учетом A4 и 300dpi
-        QFont font("Times", 50); // 12pt для основного текста
+        // Настраиваем форматирование
+        QFont font("Times", 50);
         document.setDefaultFont(font);
 
         QTextOption textOption;
@@ -133,10 +133,8 @@ private slots:
 
         // Устанавливаем размер страницы
         QRectF pageRect = pdfWriter.pageLayout().paintRectPixels(pdfWriter.resolution());
-        document.setTextWidth(pageRect.width()); // Важно: устанавливаем ширину текста
-
-        // Добавляем отступы
-        document.setDocumentMargin(50); // 50px отступы
+        document.setPageSize(pageRect.size());
+        document.setDocumentMargin(50);
 
         QPainter painter;
         if (!painter.begin(&pdfWriter)) {
@@ -145,55 +143,42 @@ private slots:
             return;
         }
 
-        // Ручное разбиение на страницы
-        qreal height = document.documentLayout()->documentSize().height();
-        int pages = qCeil(height / pageRect.height());
-
         // Настройки для нумерации страниц
         QFont pageNumberFont("Times", 10);
-        QFontMetrics pageNumberMetrics(pageNumberFont);
-        int pageNumberHeight = pageNumberMetrics.height();
+        painter.setFont(pageNumberFont);
 
-        for (int i = 0; i < pages; ++i) {
+        // Используем встроенное разбиение на страницы QTextDocument
+        int pageCount = document.pageCount();
+        QD << DUMP(pageCount);
+        for (int i = 0; i < pageCount; ++i) {
             if (i > 0) {
                 pdfWriter.newPage();
             }
 
-            // Смещаем область отрисовки для текущей страницы
+            // Рисуем содержимое текущей страницы
             painter.save();
             painter.translate(0, -i * pageRect.height());
-
-            // Устанавливаем область отсечения для текущей страницы
-            QRectF clipRect(0, i * pageRect.height(), pageRect.width(), pageRect.height());
-            painter.setClipRect(clipRect);
-
-            // Рисуем содержимое документа
-            document.drawContents(&painter);
-
-            // Восстанавливаем состояние painter для рисования номера страницы
+            document.drawContents(&painter, QRectF(0, i * pageRect.height(), pageRect.width(),
+                                                   pageRect.height()));
             painter.restore();
 
-            // Добавляем номер страницы (одно число) справа внизу
-            painter.save();
-            painter.setFont(pageNumberFont);
+            if (pageCount > 1) {
+                // Добавляем номер страницы
+                QString pageNumber = QString::number(i + 1);
+                QFontMetrics pageNumberMetrics(pageNumberFont);
+                int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
 
-            // Только номер текущей страницы
-            QString pageNumber = QString::number(i + 1);
-            int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
-
-            // Позиция справа внизу (отступ 20px от правого и нижнего края)
-            QPointF pageNumberPos(
-                pageRect.width() - pageNumberWidth - 20, // 20px от правого края
-                (i + 1) * pageRect.height() - pageNumberHeight - 20 // 20px от нижнего края
-            );
-
-            painter.drawText(pageNumberPos, pageNumber);
-            painter.restore();
+                painter.drawText(
+                    QPointF(pageRect.width() - pageNumberWidth - 20, pageRect.height() - 20),
+                    pageNumber
+                );
+            }
         }
 
         painter.end();
         m_buffer.close();
         _save(m_pdfData);
+
         // Загружаем в документ
         if (!m_buffer.open(QIODevice::ReadOnly)) {
             QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для чтения");

@@ -173,24 +173,22 @@ private slots:
             // Восстанавливаем состояние painter для рисования номера страницы
             painter.restore();
 
-            // Добавляем номер страницы, если страниц больше одной
-            if (pages > 1) {
-                painter.save();
-                painter.setFont(pageNumberFont);
+            // Добавляем номер страницы (одно число) справа внизу
+            painter.save();
+            painter.setFont(pageNumberFont);
 
-                // Позиция для номера страницы (внизу по центру)
-                QString pageNumber = QString("%1 / %2").arg(i + 1).arg(pages);
-                int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
+            // Только номер текущей страницы
+            QString pageNumber = QString::number(i + 1);
+            int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
 
-                QPointF pageNumberPos(
-                    (pageRect.width() - pageNumberWidth) / 2,
-                    (i + 1) * pageRect.height() - pageNumberHeight - 20
-                    // 20px от нижнего края
-                );
+            // Позиция справа внизу (отступ 20px от правого и нижнего края)
+            QPointF pageNumberPos(
+                pageRect.width() - pageNumberWidth - 20, // 20px от правого края
+                (i + 1) * pageRect.height() - pageNumberHeight - 20 // 20px от нижнего края
+            );
 
-                painter.drawText(pageNumberPos, pageNumber);
-                painter.restore();
-            }
+            painter.drawText(pageNumberPos, pageNumber);
+            painter.restore();
         }
 
         painter.end();

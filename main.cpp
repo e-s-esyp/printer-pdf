@@ -118,12 +118,19 @@ private slots:
         pdfWriter.setPageSize(QPageSize(QPageSize::A4));
         pdfWriter.setResolution(300);
 
+        // Загружаем изображение
+        QImage image("../Logotype_VS.png"); // Укажите правильный путь к изображению
+        if (image.isNull()) {
+            QMessageBox::warning(this, "Предупреждение", "Не удалось загрузить изображение");
+            return;
+        }
+
         // Создаем QTextDocument
         QTextDocument document;
         document.setPlainText(text);
 
         // Настраиваем форматирование
-        QFont font("Times", 50);
+        const QFont font("Times", 50);
         document.setDefaultFont(font);
 
         QTextOption textOption;
@@ -132,7 +139,8 @@ private slots:
         document.setDefaultTextOption(textOption);
 
         // Устанавливаем размер страницы
-        QRectF pageRect = pdfWriter.pageLayout().paintRectPixels(pdfWriter.resolution());
+        const QRectF pageRect = pdfWriter.pageLayout().
+                paintRectPixels(pdfWriter.resolution());
         document.setPageSize(pageRect.size());
         document.setDocumentMargin(50);
 
@@ -143,30 +151,56 @@ private slots:
             return;
         }
 
+        // Масштабируем изображение под ширину страницы (с учетом отступов)
+        const qreal availableWidth = pageRect.width() - 100; // 50px отступы с каждой стороны
+        QImage scaledImage = image.scaledToWidth(static_cast<int>(availableWidth / 10),
+                                                 Qt::SmoothTransformation);
+
         // Настройки для нумерации страниц
-        QFont pageNumberFont("Times", 10);
+        const QFont pageNumberFont("Times", 10);
         painter.setFont(pageNumberFont);
 
         // Используем встроенное разбиение на страницы QTextDocument
-        int pageCount = document.pageCount();
+        const int pageCount = document.pageCount();
         QD << DUMP(pageCount);
         for (int i = 0; i < pageCount; ++i) {
             if (i > 0) {
                 pdfWriter.newPage();
             }
 
-            // Рисуем содержимое текущей страницы
-            painter.save();
-            painter.translate(0, -i * pageRect.height());
-            document.drawContents(&painter, QRectF(0, i * pageRect.height(), pageRect.width(),
-                                                   pageRect.height()));
-            painter.restore();
+            // Для первой страницы рисуем изображение
+            if (i == 0) {
+                // Рисуем изображение вверху страницы
+                const qreal imageY = 50; // Отступ сверху
+                painter.drawImage(
+                    QRectF(50 + 9 * availableWidth / 10, imageY, scaledImage.width(),
+                           scaledImage.height()),
+                    scaledImage);
+
+                // Смещаем текст вниз на высоту изображения + отступ
+                const qreal textOffset = imageY + scaledImage.height() + 20;
+
+                painter.save();
+                painter.translate(0, -i * pageRect.height() + textOffset);
+                document.drawContents(&painter,
+                                      QRectF(0, i * pageRect.height() - textOffset,
+                                             pageRect.width(), pageRect.height()));
+                painter.restore();
+            } else {
+                // Для остальных страниц рисуем как обычно
+                painter.save();
+                painter.translate(0, -i * pageRect.height());
+                document.drawContents(&painter,
+                                      QRectF(0, i * pageRect.height(),
+                                             pageRect.width(), pageRect.height()));
+                painter.restore();
+            }
 
             if (pageCount > 1) {
                 // Добавляем номер страницы
                 QString pageNumber = QString::number(i + 1);
                 QFontMetrics pageNumberMetrics(pageNumberFont);
-                int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
+                const int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
 
                 painter.drawText(
                     QPointF(pageRect.width() - pageNumberWidth - 20, pageRect.height() - 20),
@@ -332,7 +366,7 @@ private:
         pageNavigationLayout->addWidget(m_pageSpinBox);
         pageNavigationLayout->addWidget(m_pageCountLabel);
         pageNavigationLayout->addStretch();
-        QWidget *pageNavigationWidget = new QWidget();
+        auto *pageNavigationWidget = new QWidget();
         pageNavigationWidget->setLayout(pageNavigationLayout);
         pageNavigationWidget->setMaximumHeight(40);
 
@@ -342,7 +376,7 @@ private:
         m_textEdit = new QTextEdit();
         m_textEdit->setPlaceholderText("Введите текст для создания PDF...");
         // Устанавливаем шрифт соответствующий PDF
-        QFont textEditFont("Times", 12);
+        const QFont textEditFont("Times", 12);
         m_textEdit->setFont(textEditFont);
 
         m_pdfView = new QPdfView();
@@ -414,7 +448,6 @@ private:
     }
 };
 
-// ... остальной код без изменений (myMessageHandler, main и т.д.)
 #ifdef Q_OS_UNIX
 #include <unistd.h>
 #include <sys/syscall.h>

@@ -14,7 +14,6 @@
 #include <QPageSize>
 #include <QBuffer>
 #include <QPdfWriter>
-#include <QTimer>
 #include <QDebug>
 
 #define QD qDebug()
@@ -39,7 +38,7 @@ class PdfApp final : public QMainWindow {
     QPdfDocument m_document;
 
 public:
-    void debugPdfView() {
+    void _debugPdfView() const {
         qDebug() << "=== Диагностика QPdfView ===";
         qDebug() << "Документ установлен:" << (m_pdfView->document() != nullptr);
         qDebug() << "Размер view:" << m_pdfView->size();
@@ -62,7 +61,7 @@ public:
         qDebug() << "=== Конец диагностики ===";
     }
 
-    void updatePdfView() {
+    void _updatePdfView() const {
         // 1. Перепривязываем документ
         // m_pdfView->setDocument(nullptr);
         // m_pdfView->setDocument(&m_document);
@@ -80,108 +79,60 @@ public:
         }
 
         // 5. Отладочная информация
-        debugPdfView();
+        _debugPdfView();
+    }
+
+    static void _saveImage(QPdfDocument* document) {
+        // const auto document = m_pdfView->document();
+        if (document->pageCount() > 0) {
+            // Получаем первую страницу (индекс 0) в виде QImage
+            QImage image = document->render(0, QSize(300, 400));
+            if (!image.isNull()) {
+                qDebug() << "Первая страница успешно отрендерена. Размер:"
+                        << image.size();
+                auto r = image.save("debug_page.png");
+            } else {
+                qDebug() << "Не удалось отрендерить первую страницу.";
+            }
+        } else {
+            qDebug() << "В документе нет страниц.";
+        }
+    }
+
+    static void _save(const QByteArray &data) {
+        QFile file("tmp.pdf");
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(data);
+            file.close();
+            QD << "Файл успешно сохранен";
+        } else {
+            QD << "Ошибка открытия файла:" << file.errorString();
+        }
     }
 
     explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
         setupUI();
         setupConnections();
-        // m_pdfView->setDocument(&m_document);
         m_buffer.setBuffer(&m_pdfData);
         connect(&m_document, &QPdfDocument::statusChanged, this,
                 [this](const QPdfDocument::Status status) {
                     QD << DUMP(status);
-                    if (status == QPdfDocument::Status::Ready || status ==
-                        QPdfDocument::Status::Error) {
-                        // m_buffer.close();
-                        // закрываем буфер, когда загрузка завершена (успешно или с ошибкой)
-                        if (status == QPdfDocument::Status::Ready) {
-                            QD << "Документ успешно загружен, страниц:" << m_document.
-                                    pageCount();
-                            // m_pdfView->setDocument(&m_document);
-                            QTimer::singleShot(1000, this, [this]() {
-                                m_pdfView->update();
-                                debugPdfView();
-                                updatePdfView();
-                            });
-                        } else {
-                            QD << "Ошибка загрузки документа:" << m_document.error();
-                        }
-                        if (m_document.status() == QPdfDocument::Ready) {
-                            qDebug() << "Документ готов. Количество страниц:" << m_document.
-                                    pageCount();
-
-                            if (m_document.pageCount() > 0) {
-                                // Получаем первую страницу (индекс 0) в виде QImage
-                                QImage image = m_document.render(0, QSize(300, 400));
-                                if (!image.isNull()) {
-                                    qDebug() << "Первая страница успешно отрендерена. Размер:"
-                                            << image.size();
-                                    image.save("debug_page.png");
-                                } else {
-                                    qDebug() << "Не удалось отрендерить первую страницу.";
-                                }
-                            } else {
-                                qDebug() << "В документе нет страниц.";
-                            }
-                        } else if (m_document.status() == QPdfDocument::Error) {
-                            qDebug() << "Ошибка при загрузке документа:" << m_document.
-                                    error();
-                        } else {
-                            qDebug() << "Статус документа:" << m_document.status();
-                        }
+                    if (m_document.status() == QPdfDocument::Ready) {
+                        QCoreApplication::processEvents();
+                    }
+                    if (m_document.status() == QPdfDocument::Ready) {
+                        qDebug() << "Документ готов. Количество страниц:" << m_document.
+                                pageCount();
+                    } else if (m_document.status() == QPdfDocument::Error) {
+                        qDebug() << "Ошибка при загрузке документа:" << m_document.
+                                error();
+                    } else {
+                        qDebug() << "Статус документа:" << m_document.status();
                     }
                 });
     }
 
 private slots:
-    void createPdf() {
-        // Получаем текст из текстового редактора
-        const QString text = m_textEdit->toPlainText();
-        if (text.isEmpty()) {
-            QMessageBox::warning(this, "Предупреждение", "Введите текст для создания PDF");
-            return;
-        }
-
-        // Запрашиваем место сохранения файла
-        QString fileName = QFileDialog::getSaveFileName(
-            this, "Сохранить PDF", "", "PDF Files (*.pdf)");
-        if (fileName.isEmpty()) return;
-
-        // Добавляем расширение .pdf если его нет
-        if (!fileName.endsWith(".pdf", Qt::CaseInsensitive)) {
-            fileName += ".pdf";
-        }
-
-        // Создаем PDF принтер
-        QPrinter printer(QPrinter::HighResolution);
-        printer.setOutputFormat(QPrinter::PdfFormat);
-        printer.setPageSize(QPageSize(QPageSize::A4));
-        printer.setOutputFileName(fileName);
-
-        // Создаем painter и рисуем содержимое
-        QPainter painter;
-        if (!painter.begin(&printer)) {
-            QMessageBox::critical(this, "Ошибка", "Не удалось начать рисование на принтере");
-            return;
-        }
-
-        // Устанавливаем шрифт и рисуем текст
-        QFont font = painter.font();
-        font.setPointSize(12);
-        painter.setFont(font);
-
-        const QRectF pageRect = printer.pageRect(QPrinter::DevicePixel);
-        painter.drawText(pageRect, Qt::AlignLeft | Qt::TextWordWrap, text);
-
-        painter.end();
-
-        QMessageBox::information(this, "Успех", "PDF файл успешно создан: " + fileName);
-
-        // Загружаем созданный PDF для просмотра
-        loadPdfForView(fileName);
-    }
-
     void createPdf_B() {
         QD;
         // Получаем текст из текстового редактора
@@ -193,24 +144,9 @@ private slots:
         QD;
         // Создаем буфер для хранения PDF данных
         m_pdfData.clear();
-        // m_buffer.reset();
-        // m_buffer.setBuffer(&m_pdfData);
-
         if (m_buffer.isOpen()) {
             QD;
             m_buffer.close();
-        }
-        // Проверка внутреннего массива данных
-        if (m_buffer.buffer().isEmpty()) {
-            // или if (pdfData.isEmpty())
-            qDebug() << "Буфер пуст!";
-        } else {
-            qDebug() << "Размер данных в буфере:" << m_buffer.buffer().size() << "байт";
-            // Для отладки можно даже сохранить данные в файл
-            QFile file("debug.pdf");
-            file.open(QIODevice::WriteOnly);
-            file.write(m_buffer.buffer());
-            file.close();
         }
         if (!m_buffer.open(QIODevice::WriteOnly)) {
             QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для записи");
@@ -220,7 +156,7 @@ private slots:
         // Создаем PDF writer
         QPdfWriter pdfWriter(&m_buffer);
         pdfWriter.setPageSize(QPageSize(QPageSize::A4));
-        pdfWriter.setResolution(300); // High resolution
+        pdfWriter.setResolution(600); // High resolution
         // Создаем painter и рисуем содержимое
         QPainter painter;
         if (!painter.begin(&pdfWriter)) {
@@ -229,25 +165,13 @@ private slots:
             return;
         }
         // Устанавливаем шрифт и рисуем текст
-        QFont font("Times", 14);
+        const QFont font("Times", 14);
         painter.setFont(font);
         const QRectF pageRect =
                 pdfWriter.pageLayout().paintRectPixels(pdfWriter.resolution());
         painter.drawText(pageRect, Qt::AlignLeft | Qt::TextWordWrap, text);
         painter.end();
         m_buffer.close();
-        // Проверка внутреннего массива данных
-        if (m_buffer.buffer().isEmpty()) {
-            // или if (pdfData.isEmpty())
-            qDebug() << "Буфер пуст!";
-        } else {
-            qDebug() << "Размер данных в буфере:" << m_buffer.buffer().size() << "байт";
-            // Для отладки можно даже сохранить данные в файл
-            // QFile file("debug.pdf");
-            // file.open(QIODevice::WriteOnly);
-            // file.write(buffer.buffer());
-            // file.close();
-        }
         // Загружаем данные в QPdfDocument.
         m_document.close();
         // Открываем буфер для чтения
@@ -256,17 +180,11 @@ private slots:
             return;
         }
         // Создаем документ, если еще не создан
-        // m_pdfView->setDocument(nullptr);
         QD << m_document.status();
-        m_buffer.seek(0);
-        QD << m_buffer.readAll();
         m_buffer.seek(0);
         m_document.load(&m_buffer);
         m_buffer.close();
-        // m_pdfView->documentChanged(&m_document);
-        // m_pdfView->setDocument(&m_document);
         QD << "done";
-        // QMessageBox::information(this, "Успех", "PDF документ успешно создан в памяти");
     }
 
     void printPdf() {

@@ -14,12 +14,165 @@
 #include <QPageSize>
 #include <QBuffer>
 #include <QPdfWriter>
+#include <QTime>
+#include <QEvent>
+#include <QMap>
+#include <QTimer>
 #include <QDebug>
 
 #define QD qDebug()
 #define DUMP(var)  #var << ": " << (var) << " "
 #define DUMPH(var) #var << ": " << QString::number(var, 16) << " "
 #define DUMPS(var) #var << ": " << QString::fromLatin1(var, 4) << " "
+
+
+class DetailedEventTracker : public QObject {
+    const char *eventTypeToString(int type) {
+        static const char *eventNames[] = {
+            /* 0 */ "Invalid event",
+            /* 1 */ "Timer event",
+            /* 2 */ "Mouse button pressed",
+            /* 3 */ "Mouse button released",
+            /* 4 */ "Mouse button double click",
+            /* 5 */ "Mouse move",
+            /* 6 */ "Key pressed",
+            /* 7 */ "Key released",
+            /* 8 */ "Keyboard focus received",
+            /* 9 */ "Keyboard focus lost",
+            /* 10 */ "Mouse enters widget",
+            /* 11 */ "Mouse leaves widget",
+            /* 12 */ "Paint widget",
+            /* 13 */ "Move widget",
+            /* 14 */ "Resize widget",
+            /* 15 */ "After widget creation",
+            /* 16 */ "During widget destruction",
+            /* 17 */ "Widget is shown",
+            /* 18 */ "Widget is hidden",
+            /* 19 */ "Request to close widget",
+            /* 20 */ "Request to quit application",
+            /* 21 */ "Widget has been reparented",
+            /* 22 */ "Object has changed threads",
+            /* 23 */ "Keyboard focus is about to be lost",
+            /* 24 */ "Window was activated",
+            /* 25 */ "Window was deactivated",
+            /* 26 */ "Widget is shown to parent",
+            /* 27 */ "Widget is hidden to parent",
+            /* 28-30 */ nullptr, nullptr, nullptr,
+            /* 31 */ "Wheel event",
+            /* 32 */ nullptr,
+            /* 33 */ "Window title changed",
+            /* 34 */ "Icon changed",
+            /* 35 */ "Application icon changed",
+            /* 36 */ "Application font changed",
+            /* 37 */ "Application layout direction changed",
+            /* 38 */ "Application palette changed",
+            /* 39 */ "Widget palette changed",
+            /* 40 */ "Internal clipboard event",
+            /* 41 */ nullptr,
+            /* 42 */ "Reserved for speech input",
+            /* 43 */ "Meta call event",
+            /* 44-49 */ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            /* 50 */ "Socket activation",
+            /* 51 */ "Shortcut override request",
+            /* 52 */ "Deferred delete event",
+            /* 53-59 */ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            /* 60 */ "Drag moves into widget",
+            /* 61 */ "Drag moves in widget",
+            /* 62 */ "Drag leaves or is cancelled",
+            /* 63 */ "Actual drop",
+            /* 64 */ "Drag accepted/rejected",
+            /* 65-67 */ nullptr, nullptr, nullptr,
+            /* 68 */ "New child widget",
+            /* 69 */ "Polished child widget",
+            /* 70 */ nullptr,
+            /* 71 */ "Deleted child widget",
+            /* 72 */ nullptr,
+            /* 73 */ "Widget's window should be mapped",
+            /* 74 */ "Widget should be polished",
+            /* 75 */ "Widget is polished",
+            /* 76 */ "Widget should be relayouted",
+            /* 77 */ "Widget should be repainted",
+            /* 78 */ "Request update() later",
+            /* 79 */ "ActiveX embedding",
+            /* 80 */ "ActiveX activation",
+            /* 81 */ "ActiveX deactivation",
+            /* 82 */ "Context popup menu",
+            /* 83 */ "Input method",
+            /* 84-86 */ nullptr, nullptr, nullptr,
+            /* 87 */ "Wacom tablet event",
+            /* 88 */ "The system locale changed",
+            /* 89 */ "The application language changed",
+            /* 90 */ "The layout direction changed",
+            /* 91 */ "Internal style event",
+            /* 92 */ "Tablet press",
+            /* 93 */ "Tablet release",
+            /* 94 */ "CE (Ok) button pressed",
+            /* 95 */ "CE (?) button pressed",
+            /* 96 */ "Proxy icon dragged",
+            /* 97 */ "Font has changed",
+            /* 98 */ "Enabled state has changed",
+            /* 99 */ "Window activation has changed",
+            /* 100 */ "Style has changed",
+            /* 101 */ "Icon text has changed. Deprecated",
+            /* 102 */ "Modified state has changed",
+            /* 103 */ "Window is about to be blocked modally",
+            /* 104 */ "Windows modal blocking has ended",
+            /* 105 */ "Window state change",
+            /* 106 */ "Readonly state has changed",
+            /* 107-108 */ nullptr, nullptr,
+            /* 109 */ "Mouse tracking state has changed",
+            /* 110 */ "ToolTip",
+            /* 111 */ "WhatsThis",
+            /* 112 */ "StatusTip",
+            /* 113 */ "Action changed",
+            /* 114 */ "Action added",
+            /* 115 */ "Action removed",
+            /* 116 */ "File open request",
+            /* 117 */ "Shortcut triggered",
+            /* 118 */ "WhatsThis clicked",
+            /* 119 */ nullptr,
+            /* 120 */ "Toolbar visibility toggled",
+            /* 121 */ "Application activate (deprecated)",
+            /* 122 */ "Application deactivate (deprecated)",
+            /* 123 */ "Query what's this widget help",
+            /* 124 */ "Enter what's this mode",
+            /* 125 */ "Leave what's this mode",
+            /* 126 */ "Child widget has had its z-order changed",
+            /* 127 */ "Mouse cursor enters a hover widget",
+            /* 128 */ "Mouse cursor leaves a hover widget",
+            /* 129 */ "Mouse cursor move inside a hover widget",
+            /* 130 */ nullptr,
+            /* 131 */ "Sent just before the parent change is done",
+            /* 132 */ "Win event activation"
+        };
+
+        const int arraySize = sizeof(eventNames) / sizeof(eventNames[0]);
+
+        if (type >= 0 && type < arraySize && eventNames[type] != nullptr) {
+            return eventNames[type];
+        } else {
+            static char unknownBuffer[64];
+            snprintf(unknownBuffer, sizeof(unknownBuffer), "Unknown event (%d)", type);
+            return unknownBuffer;
+        }
+    }
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override {
+        QString className = obj ? obj->metaObject()->className() : "null";
+        QString objName = obj ? obj->objectName() : "unnamed";
+        const char *eventDescription = eventTypeToString(event->type());
+        qDebug().noquote()
+                << "Time:" << QTime::currentTime().toString("hh:mm:ss.zzz")
+                << "Event:" << eventDescription
+                << "Type:" << QString("%1").arg(event->type(), 3)
+                << "Class:" << className.left(20).leftJustified(20, ' ')
+                << "Object:" << objName.left(15).leftJustified(15, ' ')
+                << "Accepted:" << event->isAccepted();
+
+        return false;
+    }
+};
 
 class PdfApp final : public QMainWindow {
     Q_OBJECT
@@ -82,7 +235,7 @@ public:
         _debugPdfView();
     }
 
-    static void _saveImage(QPdfDocument* document) {
+    static void _saveImage(QPdfDocument *document) {
         // const auto document = m_pdfView->document();
         if (document->pageCount() > 0) {
             // Получаем первую страницу (индекс 0) в виде QImage
@@ -113,23 +266,6 @@ public:
     explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
         setupUI();
         setupConnections();
-        m_buffer.setBuffer(&m_pdfData);
-        connect(&m_document, &QPdfDocument::statusChanged, this,
-                [this](const QPdfDocument::Status status) {
-                    QD << DUMP(status);
-                    if (m_document.status() == QPdfDocument::Ready) {
-                        QCoreApplication::processEvents();
-                    }
-                    if (m_document.status() == QPdfDocument::Ready) {
-                        qDebug() << "Документ готов. Количество страниц:" << m_document.
-                                pageCount();
-                    } else if (m_document.status() == QPdfDocument::Error) {
-                        qDebug() << "Ошибка при загрузке документа:" << m_document.
-                                error();
-                    } else {
-                        qDebug() << "Статус документа:" << m_document.status();
-                    }
-                });
     }
 
 private slots:
@@ -185,6 +321,11 @@ private slots:
         m_document.load(&m_buffer);
         m_buffer.close();
         QD << "done";
+    }
+
+    static void updateDocument(QPdfDocument *document) {
+        QD;
+        // QCoreApplication::processEvents();
     }
 
     void printPdf() {
@@ -327,6 +468,8 @@ private slots:
 
 private:
     void setupUI() {
+        m_buffer.setBuffer(&m_pdfData);
+
         centralWidget = new QWidget(this);
         setCentralWidget(centralWidget);
 
@@ -366,6 +509,24 @@ private:
         connect(m_createButton, &QPushButton::clicked, this, &PdfApp::createPdf_B);
         connect(m_openButton, &QPushButton::clicked, this, &PdfApp::openPdf);
         connect(m_printButton, &QPushButton::clicked, this, &PdfApp::printPdf);
+        connect(&m_document, &QPdfDocument::statusChanged, this,
+                [this](const QPdfDocument::Status status) {
+                    QD << DUMP(status);
+                    if (m_document.status() == QPdfDocument::Ready) {
+                        DetailedEventTracker tracker;
+                        qApp->installEventFilter(&tracker);
+                        // m_pdfView->update();
+                        QCoreApplication::processEvents();
+                        QD << "----------------------";
+                        QTimer::singleShot(1000, [this] {
+                            QCoreApplication::processEvents();
+                        });
+                        qApp->removeEventFilter(&tracker);
+                    } else if (m_document.status() == QPdfDocument::Error) {
+                        qDebug() << "Ошибка при загрузке документа:" << m_document.
+                                error();
+                    }
+                });
     }
 
     void loadPdfForView(const QString &fileName) {
@@ -469,7 +630,7 @@ void myMessageHandler(const QtMsgType type, const QMessageLogContext &context,
 }
 
 int main(int argc, char *argv[]) {
-    qInstallMessageHandler(myMessageHandler);
+    // qInstallMessageHandler(myMessageHandler);
     QApplication app(argc, argv);
     PdfApp window;
     window.show();

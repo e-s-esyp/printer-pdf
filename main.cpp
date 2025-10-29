@@ -309,7 +309,7 @@ private slots:
         painter.end();
         m_buffer.close();
         // Загружаем данные в QPdfDocument.
-        m_document.close();
+        // m_document.close(); // не нужно
         // Открываем буфер для чтения
         if (!m_buffer.open(QIODevice::ReadOnly)) {
             QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для чтения");
@@ -317,15 +317,11 @@ private slots:
         }
         // Создаем документ, если еще не создан
         QD << m_document.status();
-        m_buffer.seek(0);
+        // m_buffer.seek(0); // не нужно
         m_document.load(&m_buffer);
-        m_buffer.close();
+        // QCoreApplication::processEvents(); // не нужно
+        // m_buffer.close(); // нельзя!!!
         QD << "done";
-    }
-
-    static void updateDocument(QPdfDocument *document) {
-        QD;
-        // QCoreApplication::processEvents();
     }
 
     void printPdf() {
@@ -512,17 +508,7 @@ private:
         connect(&m_document, &QPdfDocument::statusChanged, this,
                 [this](const QPdfDocument::Status status) {
                     QD << DUMP(status);
-                    if (m_document.status() == QPdfDocument::Ready) {
-                        DetailedEventTracker tracker;
-                        qApp->installEventFilter(&tracker);
-                        // m_pdfView->update();
-                        QCoreApplication::processEvents();
-                        QD << "----------------------";
-                        QTimer::singleShot(1000, [this] {
-                            QCoreApplication::processEvents();
-                        });
-                        qApp->removeEventFilter(&tracker);
-                    } else if (m_document.status() == QPdfDocument::Error) {
+                    if (m_document.status() == QPdfDocument::Error) {
                         qDebug() << "Ошибка при загрузке документа:" << m_document.
                                 error();
                     }
@@ -625,12 +611,10 @@ void myMessageHandler(const QtMsgType type, const QMessageLogContext &context,
             .arg(context.line).arg(QString(context.function), msg).arg(tid);
     fprintf(stderr, "%s\n", formattedMsg.toLocal8Bit().constData());
     fflush(stderr);
-    // if (type == QtFatalMsg)
-    // abort();
 }
 
 int main(int argc, char *argv[]) {
-    // qInstallMessageHandler(myMessageHandler);
+    qInstallMessageHandler(myMessageHandler);
     QApplication app(argc, argv);
     PdfApp window;
     window.show();

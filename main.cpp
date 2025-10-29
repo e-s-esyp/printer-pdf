@@ -124,6 +124,12 @@ private slots:
             QMessageBox::warning(this, "Предупреждение", "Не удалось загрузить изображение");
             return;
         }
+        // Загружаем изображение
+        QImage image2("../Logotype_VS.png"); // Укажите правильный путь к изображению
+        if (image2.isNull()) {
+            QMessageBox::warning(this, "Предупреждение", "Не удалось загрузить изображение");
+            return;
+        }
 
         // Создаем QTextDocument
         QTextDocument document;
@@ -155,6 +161,8 @@ private slots:
         const qreal availableWidth = pageRect.width() - 100; // 50px отступы с каждой стороны
         QImage scaledImage = image.scaledToWidth(static_cast<int>(availableWidth / 10),
                                                  Qt::SmoothTransformation);
+        QImage scaledImage2 = image2.scaledToWidth(static_cast<int>(availableWidth / 10),
+                                                   Qt::SmoothTransformation);
 
         // Настройки для нумерации страниц
         const QFont pageNumberFont("Times", 10);
@@ -174,8 +182,10 @@ private slots:
                 const qreal imageY = 50; // Отступ сверху
                 painter.drawImage(
                     QRectF(50 + 9 * availableWidth / 10, imageY, scaledImage.width(),
-                           scaledImage.height()),
-                    scaledImage);
+                           scaledImage.height()), scaledImage);
+                painter.drawImage(
+                    QRectF(50 , imageY, scaledImage2.width(),
+                           scaledImage2.height()), scaledImage2);
 
                 // Смещаем текст вниз на высоту изображения + отступ
                 const qreal textOffset = imageY + scaledImage.height() + 20;

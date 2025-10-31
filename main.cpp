@@ -31,76 +31,71 @@
 #define DUMPH(var) #var << ": " << QString::number(var, 16) << " "
 #define DUMPS(var) #var << ": " << QString::fromLatin1(var, 4) << " "
 
-class PdfApp final : public QMainWindow {
-    Q_OBJECT
+static double p2mm(const qreal x) {
+    return x * 25.4 / 300.0;
+}
 
-    // Элементы интерфейса
-    QTextEdit *m_textEdit{};
-    QPdfView *m_pdfView{};
-    QPushButton *m_createButton{};
-    QPushButton *m_openButton{};
-    QPushButton *m_printButton{};
-    QWidget *centralWidget{};
-    QVBoxLayout *mainLayout{};
-    QHBoxLayout *buttonLayout{};
-    QHBoxLayout *pageNavigationLayout{};
-    QSpinBox *m_pageSpinBox{};
-    QLabel *m_pageCountLabel{};
-    QSplitter *m_splitter{};
-    QBuffer m_buffer{};
-    QByteArray m_pdfData;
-    QPdfDocument m_document;
+static double mm2p(const qreal x) {
+    return x * 300.0 / 25.4;
+}
 
-public:
-    void updatePageNavigation() const {
-        const int pageCount = m_document.pageCount();
-        m_pageSpinBox->setRange(1, qMax(1, pageCount));
-        m_pageCountLabel->setText(QString(" / %1").arg(pageCount));
-        // В Qt 5.15 используем pageNavigation()
-        if (pageCount > 0) {
-            // Устанавливаем первую страницу
-            m_pdfView->pageNavigation()->setCurrentPage(0);
+struct PdfDocument final {
+    QIODevice *device;
+    QPdfWriter *writer{};
+    QPainter painter;
+    int pageNumber = 1;
+    qreal posY = 0;
+
+    explicit PdfDocument(QIODevice *device): device(device) {
+        if (device->isOpen()) {
+            device->close();
         }
-        // Активируем/деактивируем спинбокс в зависимости от наличия страниц
-        m_pageSpinBox->setEnabled(pageCount > 0);
+        if (!device->open(QIODevice::WriteOnly)) {
+            return;
+        }
+        writer = new QPdfWriter(device);
+        writer->setResolution(300);
     }
 
-    static void _saveImage(QPdfDocument *document) {
-        if (document->pageCount() > 0) {
-            const QImage image = document->render(0, QSize(300, 400));
-            if (!image.isNull()) {
-                qDebug() << "Первая страница успешно отрендерена. Размер:"
-                        << image.size();
-                if (!image.save("debug_page.png")) {
-                }
-            } else {
-                qDebug() << "Не удалось отрендерить первую страницу.";
-            }
-        } else {
-            qDebug() << "В документе нет страниц.";
+    void begin() {
+        if (!writer) return;
+        if (!painter.begin(writer)) {
+            device->close();
         }
     }
 
-    static void _save(const QByteArray &data) {
-        QFile file("tmp.pdf");
-        if (file.open(QIODevice::WriteOnly)) {
-            file.write(data);
-            file.close();
-            QD << "Файл успешно сохранен";
-        } else {
-            QD << "Ошибка открытия файла:" << file.errorString();
+    void end() {
+        if (pageNumber > 1) {
+            drawPageNumber();
         }
+        painter.end();
+        device->close();
     }
 
-    explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
-        setupUI();
-        setupConnections();
+    ~PdfDocument() {
+        end();
+        delete writer;
     }
 
-private slots:
-    static void drawText(QPainter &painter, const QRectF &rect, const QString &text) {
+    // размеры в миллиметрах
+    void setPageSize(const int w, const int h) const {
+        if (!writer) return;
+        writer->setPageSize(QPageSize(QSize(w, h), QPageSize::Millimeter, "Report"));
+    }
+
+    // размеры в миллиметрах
+    void setMargins(const int l, const int t, const int r, const int b) const {
+        if (!writer) return;
+        auto pdfWriterLayout = writer->pageLayout();
+        pdfWriterLayout.setUnits(QPageLayout::Millimeter);
+        pdfWriterLayout.setMargins(QMarginsF(l, t, r, b));
+        writer->setPageLayout(pdfWriterLayout);
+    }
+
+    qreal drawText(const QRectF &rect, const QString &text) {
         QTextDocument textDoc;
         textDoc.setDefaultFont(painter.font()); // Используем текущий шрифт painter'а
+        // textDoc.setIndentWidth(rect.width());
         textDoc.setTextWidth(rect.width());
         QTextCursor cursor(&textDoc);
         QTextBlockFormat blockFormat;
@@ -109,30 +104,135 @@ private slots:
         cursor.insertText(text);
         textDoc.adjustSize();
         const qreal docHeight = textDoc.size().height();
-        qreal startY = 0;
+        qreal startY = rect.top();
         if (docHeight < rect.height()) {
-            startY = (rect.height() - docHeight) / 2; // Выравнивание по вертикали
+            startY += (rect.height() - docHeight) / 2; // Выравнивание по вертикали
         }
         painter.save();
         painter.translate(rect.left(), startY);
         textDoc.drawContents(&painter);
         painter.restore();
+        return docHeight;
     }
 
-    int header(QPainter &painter, const QRectF *pageRect) {
+    void paintText(const QByteArray &text) {
+        if (!writer) return;
+        const QRectF pageRect = writer->pageLayout().
+                paintRectPixels(writer->resolution());
+        painter.setPen(QPen(Qt::black, 1));
+        painter.drawRect(QRectF(0, 0, pageRect.width(), pageRect.height()));
+        const auto r = drawText(QRectF(50, 50, 200, 1000), text);
+        drawText(QRectF(50, 50 + 1000, 200, 1000 + 1000), QString("%1").arg(r));
+    }
+
+    void addText(const qreal l, const qreal r, const QByteArray &text) {
+        const auto n = drawText(QRectF(l, posY, r - l, 0), text);
+        painter.drawRect(QRectF(l, posY, r - l, n));
+        posY += n;
+    }
+
+    void addDebugText(QString &text) const {
+        if (!writer) return;
+        for (int i = 0; i < 200; ++i) {
+            text += QString("___________%1\n").arg(i);
+        }
+        text += QString("\npdfWriter.units: %1").arg(writer->pageLayout().units());
+        const auto pdfWriterRect = writer->pageLayout().pageSize().rectPixels(
+            writer->resolution());
+        text += QString("\npdfWriter.pageSize: %1 %2").arg(pdfWriterRect.width()).arg(
+            pdfWriterRect.height());
+        const QRectF pageRect = writer->pageLayout().
+                paintRectPixels(writer->resolution());
+        text += QString("\npageRect: left=%1 top=%2 width=%3 height=%4")
+                .arg(pageRect.left())
+                .arg(pageRect.top())
+                .arg(pageRect.width())
+                .arg(pageRect.height());
+        text += QString("\npageRect(mm): left=%1 top=%2 width=%3 height=%4")
+                .arg(p2mm(pageRect.left()))
+                .arg(p2mm(pageRect.top()))
+                .arg(p2mm(pageRect.width()))
+                .arg(p2mm(pageRect.height()));
+        const auto pdfWriterMargins = writer->pageLayout().margins();
+        text += QString("\npdfWriterMargins: left=%1 top=%2 right=%3 bottom=%4")
+                .arg(pdfWriterMargins.left())
+                .arg(pdfWriterMargins.top())
+                .arg(pdfWriterMargins.right())
+                .arg(pdfWriterMargins.bottom());
+        for (int i = 0; i < 200; ++i) {
+            text += ". ";
+        }
+    }
+
+    void paintDocument(const QString &text) {
+        if (!writer) return;
+        // Создаем QTextDocument
+        QTextDocument document;
+        document.setPlainText(text);
+
+        // Настраиваем форматирование
+        const QFont font("Times", 37); //14p -> 32   16p -> 37
+        document.setDefaultFont(font);
+
+        QTextOption textOption;
+        textOption.setAlignment(Qt::AlignLeft);
+        textOption.setWrapMode(QTextOption::WordWrap);
+        document.setDefaultTextOption(textOption);
+
+        // Устанавливаем размер страницы
+        const QRectF pageRect = writer->pageLayout().paintRectPixels(writer->resolution());
+        document.setPageSize(pageRect.size());
+        document.setDocumentMargin(0);
+
+        paint(document);
+    }
+
+    void paint(QTextDocument &document) {
+        if (!writer) return;
+        // Настройки для нумерации страниц
+        const QFont pageNumberFont("Times", 14);
+        painter.setFont(pageNumberFont);
+        // Используем встроенное разбиение на страницы QTextDocument
+        const int pageCount = document.pageCount();
+        QD << DUMP(pageCount);
+
+        QTextCursor cursor(&document);
+        cursor.clearSelection();
+        cursor.select(QTextCursor::Document);
+        QTextBlockFormat newFormat;
+        newFormat.setLineHeight(150, QTextBlockFormat::ProportionalHeight); // Интервал 150%
+        cursor.setBlockFormat(newFormat);
+
+        const QRectF pageRect = writer->pageLayout().
+                paintRectPixels(writer->resolution());
+        for (int i = 0; i < pageCount; ++i) {
+            if (i > 0) {
+                newPage();
+            }
+            const qreal textOffset = i < 1 ? header(&pageRect) : 0;
+            painter.save();
+            painter.translate(0, -i * pageRect.height() + textOffset);
+            document.drawContents(&painter,
+                                  QRectF(0,
+                                         i * pageRect.height() - textOffset,
+                                         pageRect.width(),
+                                         pageRect.height()));
+            painter.restore();
+        }
+    }
+
+    int header(const QRectF *pageRect) {
         constexpr qreal gapX = 100;
         painter.setPen(QPen(Qt::black, 1));
         QFont font("Times", 14); // 12->14 14->16
         // Загружаем изображение
         const QImage image("../Logotype_VS.png"); // Укажите правильный путь к изображению
         if (image.isNull()) {
-            QMessageBox::warning(this, "Предупреждение", "Не удалось загрузить изображение");
             return 0;
         }
         // Загружаем изображение
         const QImage image2("../CUSTOM.png"); // Укажите правильный путь к изображению
         if (image2.isNull()) {
-            QMessageBox::warning(this, "Предупреждение", "Не удалось загрузить изображение");
             return 0;
         }
         // Масштабируем изображение под ширину страницы (с учетом отступов)
@@ -171,152 +271,121 @@ private slots:
         return _height + 20;
     }
 
-    static double mm(const qreal x) {
-        return x * 25.4 / 300.0;
+    void startPagination() {
+        pageNumber = 1;
     }
 
-    static double mm2p(const qreal x) {
-        return x * 300.0 / 25.4;
-    }
-
-    static void addDebugText(QPdfWriter &pdfWriter, QString &text) {
-        for (int i = 0; i < 200; ++i) {
-            text += QString("___________%1\n").arg(i);
-        }
-        text += QString("\npdfWriter.units: %1").arg(pdfWriter.pageLayout().units());
-        pdfWriter.setResolution(300);
-        auto pdfWriterRect = pdfWriter.pageLayout().pageSize().rectPixels(
-            pdfWriter.resolution());
-        text += QString("\npdfWriter.pageSize: %1 %2").arg(pdfWriterRect.width()).arg(
-            pdfWriterRect.height());
-        const QRectF pageRect = pdfWriter.pageLayout().
-                paintRectPixels(pdfWriter.resolution());
-        text += QString("\npageRect: left=%1 top=%2 width=%3 height=%4")
-                .arg(pageRect.left())
-                .arg(pageRect.top())
-                .arg(pageRect.width())
-                .arg(pageRect.height());
-        text += QString("\npageRect(mm): left=%1 top=%2 width=%3 height=%4")
-                .arg(mm(pageRect.left()))
-                .arg(mm(pageRect.top()))
-                .arg(mm(pageRect.width()))
-                .arg(mm(pageRect.height()));
-        const auto pdfWriterMargins = pdfWriter.pageLayout().margins();
-        text += QString("\npdfWriterMargins: left=%1 top=%2 right=%3 bottom=%4")
-                .arg(pdfWriterMargins.left())
-                .arg(pdfWriterMargins.top())
-                .arg(pdfWriterMargins.right())
-                .arg(pdfWriterMargins.bottom());
-        for (int i = 0; i < 200; ++i) {
-            text += ". ";
-        }
-    }
-
-    void paint(QPdfWriter &pdfWriter, QTextDocument &document) {
-        QPainter painter;
-        if (!painter.begin(&pdfWriter)) {
-            QMessageBox::critical(this, "Ошибка", "Не удалось начать рисование");
-            m_buffer.close();
-            return;
-        }
-
-        // Настройки для нумерации страниц
-        const QFont pageNumberFont("Times", 14);
+    void drawPageNumber() {
+        if (!writer) return;
+        const QFont pageNumberFont("Times", 12);
         painter.setFont(pageNumberFont);
-        // Используем встроенное разбиение на страницы QTextDocument
-        const int pageCount = document.pageCount();
-        QD << DUMP(pageCount);
-
-        QTextCursor cursor(&document);
-        cursor.clearSelection();
-        cursor.select(QTextCursor::Document);
-        QTextBlockFormat newFormat;
-        newFormat.setLineHeight(150, QTextBlockFormat::ProportionalHeight); // Интервал 150%
-        cursor.setBlockFormat(newFormat);
-
-        const QRectF pageRect = pdfWriter.pageLayout().
-                paintRectPixels(pdfWriter.resolution());
-        for (int i = 0; i < pageCount; ++i) {
-            if (i > 0) {
-                pdfWriter.newPage();
-            }
-            const qreal textOffset = i == 0 ? header(painter, &pageRect) : 0;
-            painter.save();
-            painter.translate(0, -i * pageRect.height() + textOffset);
-            document.drawContents(&painter,
-                                  QRectF(0,
-                                         i * pageRect.height() - textOffset,
-                                         pageRect.width(),
-                                         pageRect.height()));
-            painter.restore();
-            if (pageCount > 1) {
-                // Добавляем номер страницы
-                QString pageNumber = QString::number(i + 1);
-                QFontMetrics pageNumberMetrics(pageNumberFont);
-                const int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
-                painter.drawText(
-                    QPointF(pageRect.width() - pageNumberWidth - 20, pageRect.height() + 40),
-                    pageNumber
-                );
-            }
-        }
-        painter.end();
+        const QFontMetrics pageNumberMetrics(pageNumberFont);
+        const int pageNumberWidth = pageNumberMetrics.horizontalAdvance(pageNumber);
+        const QRectF pageRect = writer->pageLayout().paintRectPixels(writer->resolution());
+        painter.drawText(
+            QPointF(pageRect.width() - pageNumberWidth - 20, pageRect.height() + 40),
+            QString("%1").arg(pageNumber));
     }
 
-    void paintDocument(QPdfWriter &pdfWriter, const QString &text) {
-        // Создаем QTextDocument
-        QTextDocument document;
-        document.setPlainText(text);
+    void newPage() {
+        if (!writer) return;
+        drawPageNumber();
+        writer->newPage();
+        pageNumber++;
+        posY = 0;
+    }
+};
 
-        // Настраиваем форматирование
-        const QFont font("Times", 37); //14p -> 32   16p -> 37
-        document.setDefaultFont(font);
+class PdfApp final : public QMainWindow {
+    Q_OBJECT
 
-        QTextOption textOption;
-        textOption.setAlignment(Qt::AlignLeft);
-        textOption.setWrapMode(QTextOption::WordWrap);
-        document.setDefaultTextOption(textOption);
-        const QRectF pageRect = pdfWriter.pageLayout().
-                paintRectPixels(pdfWriter.resolution());
+    // Элементы интерфейса
+    QTextEdit *m_textEdit{};
+    QPdfView *m_pdfView{};
+    QPushButton *m_createButton{};
+    QPushButton *m_openButton{};
+    QPushButton *m_printButton{};
+    QWidget *centralWidget{};
+    QVBoxLayout *mainLayout{};
+    QHBoxLayout *buttonLayout{};
+    QHBoxLayout *pageNavigationLayout{};
+    QSpinBox *m_pageSpinBox{};
+    QLabel *m_pageCountLabel{};
+    QSplitter *m_splitter{};
+    QBuffer m_buffer{};
+    QByteArray m_pdfData;
+    QPdfDocument m_document;
 
-        // Устанавливаем размер страницы
-        document.setPageSize(pageRect.size());
-        const double _documentMargin = 0; //pageRect.left(); //50 + 78;
-        document.setDocumentMargin(_documentMargin);
+public:
+    static void _saveImage(QPdfDocument *document) {
+        if (document->pageCount() > 0) {
+            const QImage image = document->render(0, QSize(300, 400));
+            if (!image.isNull()) {
+                qDebug() << "Первая страница успешно отрендерена. Размер:"
+                        << image.size();
+                if (!image.save("debug_page.png")) {
+                }
+            } else {
+                qDebug() << "Не удалось отрендерить первую страницу.";
+            }
+        } else {
+            qDebug() << "В документе нет страниц.";
+        }
+    }
 
-        paint(pdfWriter, document);
+    static void _save(const QByteArray &data) {
+        QFile file("tmp.pdf");
+        if (file.open(QIODevice::WriteOnly)) {
+            file.write(data);
+            file.close();
+            QD << "Файл успешно сохранен";
+        } else {
+            QD << "Ошибка открытия файла:" << file.errorString();
+        }
+    }
+
+    explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
+        setupUI();
+        setupConnections();
+    }
+
+private slots:
+    void updatePageNavigation() const {
+        const int pageCount = m_document.pageCount();
+        m_pageSpinBox->setRange(1, qMax(1, pageCount));
+        m_pageCountLabel->setText(QString(" / %1").arg(pageCount));
+        // В Qt 5.15 используем pageNavigation()
+        if (pageCount > 0) {
+            // Устанавливаем первую страницу
+            m_pdfView->pageNavigation()->setCurrentPage(0);
+        }
+        // Активируем/деактивируем спинбокс в зависимости от наличия страниц
+        m_pageSpinBox->setEnabled(pageCount > 0);
     }
 
     void createPdf_B() {
         m_pdfData.clear();
-        if (m_buffer.isOpen()) {
-            m_buffer.close();
-        }
-        if (!m_buffer.open(QIODevice::WriteOnly)) {
-            QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для записи");
-            return;
-        }
         //
         {
-            QPdfWriter pdfWriter(&m_buffer);
-            pdfWriter.setPageSize(QPageSize(QSize(210 - 20 + 2, 297 - 20 + 2),
-                                            QPageSize::Millimeter,
-                                            "VS-Report"));
-            auto pdfWriterLayout = pdfWriter.pageLayout();
-            pdfWriterLayout.setUnits(QPageLayout::Millimeter);
-            pdfWriterLayout.setMargins(QMarginsF(11, 11, 1, 11));
-            pdfWriter.setPageLayout(pdfWriterLayout);
-
+            PdfDocument doc(&m_buffer);
+            doc.setPageSize(210 - 20 + 2, 297 - 20 + 2);
+            doc.setMargins(11, 11, 1, 11);
+            doc.begin();
             QString text = m_textEdit->toPlainText();
-            if (text.isEmpty()) {
-                QMessageBox::warning(this, "Предупреждение",
-                                     "Введите текст для создания PDF");
-                return;
-            }
-            addDebugText(pdfWriter, text);
-            paintDocument(pdfWriter, text);
+            doc.addDebugText(text);
+            doc.paintDocument(text);
+            doc.newPage();
+            doc.paintText("hello\nmy\nworld");
+            doc.newPage();
+            doc.addText(100, 500, "| 1 # # # # # # # # # # # #");
+            doc.addText(200, 500, "| 2 # # # # # # # # # # # #");
+            doc.addText(300, 500, "| 3 # # # # # # # # # # # #");
+            doc.addText(400, 500, "| 4 # # # # # # # # # # # #");
+            doc.addText(500, 500, "| 5 # # # # # # # # # # # #");
+            doc.addText(600, 1500, "| 6 # # # # # # # # # # # # # # # # # # # # # # # #");
+            doc.addText(600, 500, "| 6 # # # # # # # # # # # # # # # # # # # # # # # #");
         }
-        m_buffer.close();
+
         _save(m_pdfData);
 
         // Загружаем в документ

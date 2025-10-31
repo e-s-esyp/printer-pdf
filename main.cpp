@@ -26,6 +26,8 @@
 #include <QSplitter>
 #include <QDebug>
 
+#define debug_ true
+
 #define QD qDebug()
 #define DUMP(var)  #var << ": " << (var) << " "
 #define DUMPH(var) #var << ": " << QString::number(var, 16) << " "
@@ -45,6 +47,7 @@ struct PdfDocument final {
     QPainter painter;
     int pageNumber = 1;
     qreal posY = 0;
+    qreal pageHeight = 0;
 
     explicit PdfDocument(QIODevice *device): device(device) {
         if (device->isOpen()) {
@@ -62,6 +65,8 @@ struct PdfDocument final {
         if (!painter.begin(writer)) {
             device->close();
         }
+        const QRectF pageRect = writer->pageLayout().paintRectPixels(writer->resolution());
+        pageHeight = pageRect.height();
     }
 
     void end() {
@@ -92,48 +97,239 @@ struct PdfDocument final {
         writer->setPageLayout(pdfWriterLayout);
     }
 
-    qreal drawText(const QRectF &rect, const QString &text) {
-        QTextDocument textDoc;
-        textDoc.setDefaultFont(painter.font()); // Используем текущий шрифт painter'а
-        // textDoc.setIndentWidth(rect.width());
-        textDoc.setTextWidth(rect.width());
-        QTextCursor cursor(&textDoc);
-        QTextBlockFormat blockFormat;
-        blockFormat.setLineHeight(150, QTextBlockFormat::ProportionalHeight); // 150% интервал
-        cursor.setBlockFormat(blockFormat);
-        cursor.insertText(text);
-        textDoc.adjustSize();
-        const qreal docHeight = textDoc.size().height();
-        qreal startY = rect.top();
-        if (docHeight < rect.height()) {
-            startY += (rect.height() - docHeight) / 2; // Выравнивание по вертикали
+    qreal textHeightManualWithNewlines(const QString &text, const qreal width,
+                                       const qreal lineSpacing = 1.5) const {
+        QFontMetricsF fm(painter.font());
+        qreal lineHeight = fm.height() * lineSpacing;
+        qreal totalHeight = 0;
+
+        // Разбиваем текст на параграфы по символам переноса строки
+        QStringList paragraphs = text.split('\n');
+
+        for (const QString &paragraph: paragraphs) {
+            if (paragraph.isEmpty()) {
+                // Пустая строка - все равно учитываем высоту
+                totalHeight += lineHeight;
+                continue;
+            }
+
+            QStringList words = paragraph.split(' ');
+            QStringList lines;
+            QString currentLine;
+
+            // Формируем строки с переносом по словам для каждого параграфа
+            for (const QString &word: words) {
+                if (word.isEmpty()) continue;
+
+                QString testLine = currentLine.isEmpty() ? word : currentLine + " " + word;
+                if (fm.horizontalAdvance(testLine) <= width || currentLine.isEmpty()) {
+                    currentLine = testLine;
+                } else {
+                    lines.append(currentLine);
+                    currentLine = word;
+                }
+            }
+
+            if (!currentLine.isEmpty()) {
+                lines.append(currentLine);
+            }
+
+            totalHeight += lines.count() * lineHeight;
         }
-        painter.save();
-        painter.translate(rect.left(), startY);
-        textDoc.drawContents(&painter);
-        painter.restore();
-        return docHeight;
+
+        return totalHeight;
     }
 
-    void paintText(const QByteArray &text) {
-        if (!writer) return;
-        const QRectF pageRect = writer->pageLayout().
-                paintRectPixels(writer->resolution());
-        painter.setPen(QPen(Qt::black, 1));
-        painter.drawRect(QRectF(0, 0, pageRect.width(), pageRect.height()));
-        const auto r = drawText(QRectF(50, 50, 200, 1000), text);
-        drawText(QRectF(50, 50 + 1000, 200, 1000 + 1000), QString("%1").arg(r));
+    qreal calculateTextHeightAdvanced(const QString &text, const qreal width,
+                                      const qreal lineSpacing = 1.5) const {
+        QFontMetricsF fm(painter.font());
+        qreal lineHeight = fm.height() * lineSpacing;
+        qreal totalHeight = 0;
+
+        QStringList paragraphs = text.split('\n');
+
+        for (const QString &paragraph: paragraphs) {
+            // Учитываем даже полностью пустые параграфы
+            if (paragraph.trimmed().isEmpty()) {
+                totalHeight += lineHeight;
+                continue;
+            }
+
+            QStringList words = paragraph.split(' ', Qt::SkipEmptyParts);
+            if (words.isEmpty()) {
+                totalHeight += lineHeight;
+                continue;
+            }
+
+            QStringList lines;
+            QString currentLine = words.first();
+
+            for (int i = 1; i < words.size(); ++i) {
+                const QString &word = words[i];
+                QString testLine = currentLine + " " + word;
+
+                if (fm.horizontalAdvance(testLine) <= width) {
+                    currentLine = testLine;
+                } else {
+                    lines.append(currentLine);
+                    currentLine = word;
+                }
+            }
+
+            lines.append(currentLine);
+            totalHeight += lines.count() * lineHeight;
+        }
+
+        return totalHeight;
+    }
+
+    void drawTextWithWordWrap(const QRectF &rect, const QString &text) {
+        QTextDocument textDoc;
+
+        // Настройка документа
+        textDoc.setDefaultFont(painter.font());
+        textDoc.setTextWidth(rect.width()); // Ключевой параметр для переноса
+        // textDoc.setPlainText(text); // Или setHtml() для HTML разметки
+
+        QTextCursor cursor(&textDoc);
+        QTextBlockFormat blockFormat;
+        blockFormat.setLineHeight(150, QTextBlockFormat::ProportionalHeight);
+        cursor.setBlockFormat(blockFormat);
+        cursor.insertText(text);
+
+        // Отрисовка
+        painter.save();
+        painter.translate(rect.topLeft());
+        textDoc.drawContents(&painter, QRectF(0, 0, rect.width(), rect.height()));
+        painter.restore();
+    }
+
+    std::pair<QString, QString> splitTextByHeight(const QString &text, const qreal width,
+                                                  const qreal maxHeight,
+                                                  const qreal lineSpacing = 1.5) const {
+        QFontMetricsF fm(painter.font());
+        qreal lineHeight = fm.height() * lineSpacing;
+        qreal currentHeight = 0;
+
+        QString firstPart;
+        QString secondPart;
+
+        // Разбиваем текст на параграфы по переносам строк
+        QStringList paragraphs = text.split('\n');
+
+        for (int i = 0; i < paragraphs.size(); i++) {
+            const QString &paragraph = paragraphs[i];
+
+            if (paragraph.trimmed().isEmpty()) {
+                // Обработка пустых строк
+                if (currentHeight + lineHeight <= maxHeight) {
+                    if (!firstPart.isEmpty()) firstPart += "\n";
+                    firstPart += paragraph;
+                    currentHeight += lineHeight;
+                } else {
+                    // Добавляем оставшиеся параграфы во вторую часть
+                    if (!secondPart.isEmpty()) secondPart += "\n";
+                    secondPart += paragraph;
+                    for (int j = i + 1; j < paragraphs.size(); j++) {
+                        secondPart += "\n" + paragraphs[j];
+                    }
+                    break;
+                }
+                continue;
+            }
+
+            // Разбиваем параграф на слова
+            QStringList words = paragraph.split(' ', Qt::SkipEmptyParts);
+            if (words.isEmpty()) continue;
+
+            QStringList lines;
+            QString currentLine = words.first();
+
+            // Формируем строки для текущего параграфа
+            for (int j = 1; j < words.size(); j++) {
+                const QString &word = words[j];
+                QString testLine = currentLine + " " + word;
+
+                if (fm.horizontalAdvance(testLine) <= width) {
+                    currentLine = testLine;
+                } else {
+                    lines.append(currentLine);
+                    currentLine = word;
+                }
+            }
+            lines.append(currentLine);
+
+            // Обрабатываем строки параграфа
+            QString paragraphFirstPart;
+            QString paragraphSecondPart;
+            bool paragraphCompleted = true;
+
+            for (int j = 0; j < lines.size(); j++) {
+                if (currentHeight + lineHeight <= maxHeight) {
+                    // Строка помещается в первую часть
+                    if (!paragraphFirstPart.isEmpty()) paragraphFirstPart += "\n";
+                    paragraphFirstPart += lines[j];
+                    currentHeight += lineHeight;
+                } else {
+                    // Строка не помещается - переносим во вторую часть
+                    paragraphCompleted = false;
+                    for (int k = j; k < lines.size(); k++) {
+                        if (!paragraphSecondPart.isEmpty()) paragraphSecondPart += "\n";
+                        paragraphSecondPart += lines[k];
+                    }
+                    break;
+                }
+            }
+
+            // Добавляем обработанный параграф в результат
+            if (!paragraphFirstPart.isEmpty()) {
+                if (!firstPart.isEmpty()) firstPart += "\n";
+                firstPart += paragraphFirstPart;
+            }
+
+            if (!paragraphSecondPart.isEmpty()) {
+                if (!secondPart.isEmpty()) secondPart += "\n";
+                secondPart += paragraphSecondPart;
+
+                // Добавляем оставшиеся параграфы во вторую часть
+                for (int j = i + 1; j < paragraphs.size(); j++) {
+                    secondPart += "\n" + paragraphs[j];
+                }
+                break;
+            }
+
+            // Если параграф завершен, но это был последний - выходим
+            if (i == paragraphs.size() - 1) {
+                break;
+            }
+        }
+
+        return {firstPart, secondPart};
     }
 
     void addText(const qreal l, const qreal r, const QByteArray &text) {
-        const auto n = drawText(QRectF(l, posY, r - l, 0), text);
-        painter.drawRect(QRectF(l, posY, r - l, n));
-        posY += n;
+        const auto w = r - l;
+        QString t = text;
+        do {
+            auto p = splitTextByHeight(t, w, pageHeight - posY);
+            const auto h = calculateTextHeightAdvanced(p.first, w);
+            drawTextWithWordWrap(QRectF(l, posY, w, h), t);
+            if (debug_) {
+                QD << DUMP(p.first) << DUMP(p.second) << DUMP(h) << DUMP(w);
+                painter.setPen(QPen(Qt::black, 1));
+                painter.drawRect(QRectF(l, posY, w, h));
+            }
+            posY += h;
+            t = p.second;
+            if (t.size() > 0) {
+                newPage();
+            }
+        } while (t.size() > 0);
     }
 
     void addDebugText(QString &text) const {
         if (!writer) return;
-        for (int i = 0; i < 200; ++i) {
+        for (int i = 0; i < 50; ++i) {
             text += QString("___________%1\n").arg(i);
         }
         text += QString("\npdfWriter.units: %1").arg(writer->pageLayout().units());
@@ -371,19 +567,19 @@ private slots:
             doc.setPageSize(210 - 20 + 2, 297 - 20 + 2);
             doc.setMargins(11, 11, 1, 11);
             doc.begin();
-            QString text = m_textEdit->toPlainText();
-            doc.addDebugText(text);
-            doc.paintDocument(text);
-            doc.newPage();
-            doc.paintText("hello\nmy\nworld");
-            doc.newPage();
-            doc.addText(100, 500, "| 1 # # # # # # # # # # # #");
-            doc.addText(200, 500, "| 2 # # # # # # # # # # # #");
-            doc.addText(300, 500, "| 3 # # # # # # # # # # # #");
-            doc.addText(400, 500, "| 4 # # # # # # # # # # # #");
-            doc.addText(500, 500, "| 5 # # # # # # # # # # # #");
-            doc.addText(600, 1500, "| 6 # # # # # # # # # # # # # # # # # # # # # # # #");
-            doc.addText(600, 500, "| 6 # # # # # # # # # # # # # # # # # # # # # # # #");
+            // QString text = m_textEdit->toPlainText();
+            // doc.addDebugText(text);
+            // doc.paintDocument(text);
+            // doc.newPage();
+            for (int i = 0; i < 5; ++i) {
+                doc.addText(0, 1000, "hello\nmy\nworld");
+                doc.addText(100, 500, "| 1 # # \n# # # # # # # # # #..........\n\n\n");
+                doc.addText(200, 500, "| 2 # # # \n\n\n# # # # # # # # #...........\n");
+                doc.addText(300, 500, "| 3 # # # # # # # # # # # #............");
+                doc.addText(400, 500, "| 4 # # # # # # # # # # # #........ ...");
+                doc.addText(600, 1500,
+                            "| 6 # # # # # #\n\n\n # # # # # # # # # # # # # # # # # #\n");
+            }
         }
 
         _save(m_pdfData);

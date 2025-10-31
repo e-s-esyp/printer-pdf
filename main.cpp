@@ -179,13 +179,10 @@ private slots:
         return x * 300.0 / 25.4;
     }
 
-    static void debugText(QPdfWriter &pdfWriter, QString &text) {
-        text += "___________0\n" "___________\n" "___________\n" "___________\n"
-                "___________\n" "___________\n" "___________\n" "___________\n"
-                "___________\n" "___________\n" "___________10\n" "___________\n"
-                "___________\n" "___________\n" "___________\n" "___________\n"
-                "___________\n" "___________\n" "___________\n" "___________\n"
-                "___________20";
+    static void addDebugText(QPdfWriter &pdfWriter, QString &text) {
+        for (int i = 0; i < 200; ++i) {
+            text += QString("___________%1\n").arg(i);
+        }
         text += QString("\npdfWriter.units: %1").arg(pdfWriter.pageLayout().units());
         pdfWriter.setResolution(300);
         auto pdfWriterRect = pdfWriter.pageLayout().pageSize().rectPixels(
@@ -215,52 +212,7 @@ private slots:
         }
     }
 
-    void createPdf_B() {
-        QString text = m_textEdit->toPlainText();
-        if (text.isEmpty()) {
-            QMessageBox::warning(this, "Предупреждение", "Введите текст для создания PDF");
-            return;
-        }
-
-        m_pdfData.clear();
-        if (m_buffer.isOpen()) {
-            m_buffer.close();
-        }
-        if (!m_buffer.open(QIODevice::WriteOnly)) {
-            QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для записи");
-            return;
-        }
-
-        QPdfWriter pdfWriter(&m_buffer);
-        pdfWriter.setPageSize(QPageSize(QSize(210 - 20 + 2, 297 - 20 + 2),
-                                        QPageSize::Millimeter,
-                                        "VS-Report"));
-        auto pdfWriterLayout = pdfWriter.pageLayout();
-        pdfWriterLayout.setUnits(QPageLayout::Millimeter);
-        pdfWriterLayout.setMargins(QMarginsF(11, 11, 1, 11));
-        pdfWriter.setPageLayout(pdfWriterLayout);
-
-        debugText(pdfWriter, text);
-
-        // Создаем QTextDocument
-        QTextDocument document;
-        document.setPlainText(text);
-
-        // Настраиваем форматирование
-        const QFont font("Times", 37); //14p -> 32   16p -> 37
-        document.setDefaultFont(font);
-
-        QTextOption textOption;
-        textOption.setAlignment(Qt::AlignLeft);
-        textOption.setWrapMode(QTextOption::WordWrap);
-        document.setDefaultTextOption(textOption);
-        const QRectF pageRect = pdfWriter.pageLayout().
-                paintRectPixels(pdfWriter.resolution());
-
-        // Устанавливаем размер страницы
-        document.setPageSize(pageRect.size());
-        const double _documentMargin = 0; //pageRect.left(); //50 + 78;
-        document.setDocumentMargin(_documentMargin);
+    void paint(QPdfWriter &pdfWriter, QTextDocument &document) {
         QPainter painter;
         if (!painter.begin(&pdfWriter)) {
             QMessageBox::critical(this, "Ошибка", "Не удалось начать рисование");
@@ -282,6 +234,8 @@ private slots:
         newFormat.setLineHeight(150, QTextBlockFormat::ProportionalHeight); // Интервал 150%
         cursor.setBlockFormat(newFormat);
 
+        const QRectF pageRect = pdfWriter.pageLayout().
+                paintRectPixels(pdfWriter.resolution());
         for (int i = 0; i < pageCount; ++i) {
             if (i > 0) {
                 pdfWriter.newPage();
@@ -293,7 +247,7 @@ private slots:
                                   QRectF(0,
                                          i * pageRect.height() - textOffset,
                                          pageRect.width(),
-                                         pageRect.height() - textOffset));
+                                         pageRect.height()));
             painter.restore();
             if (pageCount > 1) {
                 // Добавляем номер страницы
@@ -307,6 +261,61 @@ private slots:
             }
         }
         painter.end();
+    }
+
+    void paintDocument(QPdfWriter &pdfWriter, const QString &text) {
+        // Создаем QTextDocument
+        QTextDocument document;
+        document.setPlainText(text);
+
+        // Настраиваем форматирование
+        const QFont font("Times", 37); //14p -> 32   16p -> 37
+        document.setDefaultFont(font);
+
+        QTextOption textOption;
+        textOption.setAlignment(Qt::AlignLeft);
+        textOption.setWrapMode(QTextOption::WordWrap);
+        document.setDefaultTextOption(textOption);
+        const QRectF pageRect = pdfWriter.pageLayout().
+                paintRectPixels(pdfWriter.resolution());
+
+        // Устанавливаем размер страницы
+        document.setPageSize(pageRect.size());
+        const double _documentMargin = 0; //pageRect.left(); //50 + 78;
+        document.setDocumentMargin(_documentMargin);
+
+        paint(pdfWriter, document);
+    }
+
+    void createPdf_B() {
+        m_pdfData.clear();
+        if (m_buffer.isOpen()) {
+            m_buffer.close();
+        }
+        if (!m_buffer.open(QIODevice::WriteOnly)) {
+            QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для записи");
+            return;
+        }
+        //
+        {
+            QPdfWriter pdfWriter(&m_buffer);
+            pdfWriter.setPageSize(QPageSize(QSize(210 - 20 + 2, 297 - 20 + 2),
+                                            QPageSize::Millimeter,
+                                            "VS-Report"));
+            auto pdfWriterLayout = pdfWriter.pageLayout();
+            pdfWriterLayout.setUnits(QPageLayout::Millimeter);
+            pdfWriterLayout.setMargins(QMarginsF(11, 11, 1, 11));
+            pdfWriter.setPageLayout(pdfWriterLayout);
+
+            QString text = m_textEdit->toPlainText();
+            if (text.isEmpty()) {
+                QMessageBox::warning(this, "Предупреждение",
+                                     "Введите текст для создания PDF");
+                return;
+            }
+            addDebugText(pdfWriter, text);
+            paintDocument(pdfWriter, text);
+        }
         m_buffer.close();
         _save(m_pdfData);
 
@@ -344,8 +353,6 @@ private slots:
         pageLayout.setMargins(QMarginsF(9 + 4, 4 + 4, 1 + 4, 6 + 4)); // Отступы в мм
         pageLayout.setOrientation(QPageLayout::Orientation::Portrait);
         printer.setPageLayout(pageLayout);
-        // ReSharper disable once CppDeprecatedEntity
-        QD << printer.pageSize();
         QD << printer.pageLayout().pageSize().id();
 
         QPrintDialog printDialog(&printer, this);

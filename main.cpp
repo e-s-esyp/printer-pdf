@@ -325,24 +325,38 @@ struct Pdf final {
         return {firstPart, secondPart};
     }
 
-    void addText(const qreal l, const qreal r, const QByteArray &text) {
+    void addText(const qreal l, const qreal r, const QByteArray &text, const int format) {
         const auto w = r - l;
         QString t = text;
-        do {
-            auto p = splitTextByHeight(t, w, pageHeight - posY);
-            const auto h = calculateTextHeightAdvanced(p.first, w);
-            drawTextWithWordWrap(QRectF(l, posY, w, h), Qt::AlignLeft, t);
-            if (debug_) {
-                QD << DUMP(p.first) << DUMP(p.second) << DUMP(h) << DUMP(w);
-                painter.setPen(QPen(Qt::black, 1));
-                painter.drawRect(QRectF(l, posY, w, h));
+        //
+        {
+            using namespace Format;
+            QFont defaultFont = painter.font();
+            QFont font = painter.font();
+            font.setPointSize(format & Small ? 12 : 14);
+            if (format & Italic) font.setItalic(true);
+            if (format & Bold) font.setBold(true);
+            painter.setFont(font);
+            do {
+                auto p = splitTextByHeight(t, w, pageHeight - posY);
+                const auto h = calculateTextHeightAdvanced(p.first, w);
+                drawTextWithWordWrap(QRectF(l, posY, w, h), Qt::AlignLeft, t);
+                if (debug_) {
+                    QD << DUMP(p.first) << DUMP(p.second) << DUMP(h) << DUMP(w);
+                    painter.setPen(QPen(Qt::black, 1));
+                    painter.drawRect(QRectF(l, posY, w, h));
+                }
+                posY += h;
+                t = p.second;
+                if (t.size() > 0) {
+                    newPage();
+                }
+            } while (t.size() > 0);
+            // Восстанавливаем стандартный шрифт
+            if (format & Italic || format & Bold) {
+                painter.setFont(defaultFont);
             }
-            posY += h;
-            t = p.second;
-            if (t.size() > 0) {
-                newPage();
-            }
-        } while (t.size() > 0);
+        }
     }
 
     void addTableRow(const QVector<qreal> &borders, const QVector<QByteArray> &contents,
@@ -921,41 +935,13 @@ private slots:
                                     "Алгоритмы обработки:",
                                     "ФНЧ 1000 Гц, ФВЧ 5 Гц"
                                 }, {AlignBottom + VUse, AlignBottom + Italic + Small + VUse});
-
-                doc.addParagraph(0, w, {"Примечание:", m_textEdit->toPlainText().toUtf8()}, {
-                                     AlignTop + Italic + VUse,
-                                     AlignTop + Italic + Small + VUse
-                                 });
-                /*/
-                const auto sY = doc.posY;
-                doc.addTableRow({150, 600, w}, {
-                                    "Примечание:",
-                                    ""
-                                }, {
-                                    AlignTop + Italic + VUse,
-                                    AlignTop + Italic + Small + VUse
-                                });
-                doc.posY = sY;
-                doc.addTableRow({150, w}, {
-                                    "                               " +
-                                    m_textEdit->toPlainText().toUtf8()
-                                }, {
-                                    AlignTop + Italic + Small + VUse
-                                });
-                doc.posY = sY;
-                /*/
+                doc.skip(150);
+                doc.addTableRow({150, w}, {"Примечание:"}, {AlignBottom + Italic + VUse});
+                doc.skip(-70);
+                doc.addText(0, w,
+                            "                                       " + m_textEdit->
+                            toPlainText().toUtf8(), Italic + Small);
             }
-            /*
-                        for (int i = 0; i < 5; ++i) {
-                            doc.addText(0, 1000, "hello\nmy\nworld");
-                            doc.addText(100, 500, "| 1 # # \n# # # # # # # # # #..........\n\n\n");
-                            doc.addText(200, 500, "| 2 # # # \n\n\n# # # # # # # # #...........\n");
-                            doc.addText(300, 500, "| 3 # # # # # # # # # # # #............");
-                            doc.addText(400, 500, "| 4 # # # # # # # # # # # #........ ...");
-                            doc.addText(600, 1500,
-                                        "| 6 # # # # # #\n\n\n # # # # # # # # # # # # # # # # # #\n");
-                        }
-                        */
         }
 
         _save(m_pdfData);

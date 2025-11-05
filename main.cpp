@@ -91,7 +91,7 @@ struct Pdf final {
 
     ~Pdf() {
         end();
-        delete writer;
+        // delete writer;
     }
 
     // размеры в миллиметрах
@@ -1138,7 +1138,6 @@ private:
         connect(&printButton, &QPushButton::clicked, this, &PdfApp::printPdf);
         connect(&pageSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
                 this, &PdfApp::onPageChanged);
-
         connect(&document, &QPdfDocument::statusChanged, this,
                 [this](const QPdfDocument::Status status) {
                     QD << DUMP(status);
@@ -1148,10 +1147,8 @@ private:
                         updatePageNavigation();
                     }
                 });
-
         connect(&document, &QPdfDocument::pageCountChanged, this,
                 &PdfApp::updatePageNavigation);
-
         // В Qt 5.15 используем pageNavigation() вместо pageNavigator()
         connect(pdfView.pageNavigation(), &QPdfPageNavigation::currentPageChanged,
                 this, &PdfApp::onCurrentPageChanged);

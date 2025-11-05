@@ -26,7 +26,7 @@
 #include <QSplitter>
 #include <QDebug>
 
-#define debug_ true
+#define debug_ false
 
 #define QD qDebug()
 #define DUMP(var)  #var << ": " << (var) << " "
@@ -41,7 +41,23 @@ static double mm2p(const qreal x) {
     return x * 300.0 / 25.4;
 }
 
-struct PdfDocument final {
+namespace Format {
+    enum {
+        AlignTop = 1,
+        AlignVCenter = 2,
+        AlignBottom = 3,
+        AlignLeft = 4,
+        AlignHCenter = 8,
+        AlignRight = 12,
+        Italic = 16,
+        Bold = 32,
+        Picture = 64,
+        VUse = 128,
+        Small = 256
+    };
+}
+
+struct Pdf final {
     QIODevice *device;
     QPdfWriter *writer{};
     QPainter painter;
@@ -49,7 +65,7 @@ struct PdfDocument final {
     qreal posY = 0;
     qreal pageHeight = 0;
 
-    explicit PdfDocument(QIODevice *device): device(device) {
+    explicit Pdf(QIODevice *device): device(device) {
         if (device->isOpen()) {
             device->close();
         }
@@ -77,7 +93,7 @@ struct PdfDocument final {
         device->close();
     }
 
-    ~PdfDocument() {
+    ~Pdf() {
         end();
         delete writer;
     }
@@ -142,8 +158,8 @@ struct PdfDocument final {
 
     qreal calculateTextHeightAdvanced(const QString &text, const qreal width,
                                       const qreal lineSpacing = 1.5) const {
-        QFontMetricsF fm(painter.font());
-        qreal lineHeight = fm.height() * lineSpacing;
+        const QFontMetricsF fm(painter.font());
+        const qreal lineHeight = fm.height() * lineSpacing;
         qreal totalHeight = 0;
 
         QStringList paragraphs = text.split('\n');
@@ -183,17 +199,19 @@ struct PdfDocument final {
         return totalHeight;
     }
 
-    void drawTextWithWordWrap(const QRectF &rect, const QString &text) {
+    void drawTextWithWordWrap(const QRectF &rect, const int alignmentFlags,
+                              const QString &text) {
         QTextDocument textDoc;
 
         // Настройка документа
         textDoc.setDefaultFont(painter.font());
         textDoc.setTextWidth(rect.width()); // Ключевой параметр для переноса
-        // textDoc.setPlainText(text); // Или setHtml() для HTML разметки
 
         QTextCursor cursor(&textDoc);
         QTextBlockFormat blockFormat;
         blockFormat.setLineHeight(150, QTextBlockFormat::ProportionalHeight);
+        blockFormat.setAlignment(
+            static_cast<Qt::Alignment>(alignmentFlags) | Qt::AlignVCenter);
         cursor.setBlockFormat(blockFormat);
         cursor.insertText(text);
 
@@ -207,8 +225,8 @@ struct PdfDocument final {
     std::pair<QString, QString> splitTextByHeight(const QString &text, const qreal width,
                                                   const qreal maxHeight,
                                                   const qreal lineSpacing = 1.5) const {
-        QFontMetricsF fm(painter.font());
-        qreal lineHeight = fm.height() * lineSpacing;
+        const QFontMetricsF fm(painter.font());
+        const qreal lineHeight = fm.height() * lineSpacing;
         qreal currentHeight = 0;
 
         QString firstPart;
@@ -313,7 +331,7 @@ struct PdfDocument final {
         do {
             auto p = splitTextByHeight(t, w, pageHeight - posY);
             const auto h = calculateTextHeightAdvanced(p.first, w);
-            drawTextWithWordWrap(QRectF(l, posY, w, h), t);
+            drawTextWithWordWrap(QRectF(l, posY, w, h), Qt::AlignLeft, t);
             if (debug_) {
                 QD << DUMP(p.first) << DUMP(p.second) << DUMP(h) << DUMP(w);
                 painter.setPen(QPen(Qt::black, 1));
@@ -327,11 +345,177 @@ struct PdfDocument final {
         } while (t.size() > 0);
     }
 
+    void addTableRow(const QVector<qreal> &borders, const QVector<QByteArray> &contents,
+                     const QVector<int> &formats, const qreal maxRowHeight = -1,
+                     const bool drawGrid = false) {
+        // Проверка корректности входных данных
+        if (borders.size() < 2 || contents.size() != borders.size() - 1 ||
+            contents.size() != formats.size()) {
+            return;
+        }
+
+        const int cellCount = contents.size();
+
+        // Рассчитываем высоты всех ячеек
+        QVector<qreal> cellHeights(cellCount);
+        qreal actualMaxHeight = 0;
+
+        for (int i = 0; i < cellCount; ++i) {
+            const qreal cellWidth = borders[i + 1] - borders[i];
+
+            if (formats[i] & 64) {
+                // Картинка
+                QImage image(contents[i]);
+                if (!image.isNull()) {
+                    // Масштабируем изображение по ширине ячейки
+                    QSizeF scaledSize = image.size().scaled(static_cast<int>(cellWidth),
+                                                            image.height(),
+                                                            Qt::KeepAspectRatio);
+                    cellHeights[i] = scaledSize.height();
+                    actualMaxHeight = qMax(actualMaxHeight, cellHeights[i]);
+                }
+            } else {
+                // Текст
+                QString text = contents[i];
+                // Рассчитываем высоту текста с учетом переноса слов
+                qreal textHeight = calculateTextHeightAdvanced(text, cellWidth);
+                cellHeights[i] = textHeight;
+                actualMaxHeight = qMax(actualMaxHeight, textHeight);
+            }
+        }
+
+        // Определяем итоговую высоту строки
+        const qreal rowHeight = maxRowHeight > 0
+                                    ? qMin(maxRowHeight, actualMaxHeight)
+                                    : actualMaxHeight;
+
+        // Проверяем, помещается ли строка на текущей странице
+        if (posY + rowHeight > pageHeight) {
+            // Переносим на новую страницу
+            newPage();
+
+            // Проверяем, помещается ли на новой странице
+            if (rowHeight > pageHeight) {
+                // Не помещается даже на пустой странице - не выводим
+                return;
+            }
+        }
+
+        // Рисуем ячейки
+        for (int i = 0; i < cellCount; ++i) {
+            const qreal left = borders[i];
+            const qreal width = borders[i + 1] - borders[i];
+            const QByteArray &content = contents[i];
+            const int format = formats[i];
+
+            QRectF cellRect(left, posY, width, rowHeight);
+            //
+            {
+                using namespace Format;
+                if (format & Picture) {
+                    // Картинка
+                    QImage image(content);
+                    if (!image.isNull()) {
+                        // Масштабируем изображение
+                        QSizeF scaledSize = image.size().scaled(
+                            static_cast<int>(width),
+                            static_cast<int>(rowHeight),
+                            Qt::KeepAspectRatio);
+
+                        // Вычисляем позицию с учетом выравнивания
+                        qreal x = left;
+                        qreal y = posY;
+
+                        // Горизонтальное выравнивание
+                        if (format & 8) {
+                            // центр
+                            x += (width - scaledSize.width()) / 2;
+                        } else if (format & 12) {
+                            // справа
+                            x += width - scaledSize.width();
+                        }
+
+                        // Вертикальное выравнивание
+                        if (format & 2) {
+                            // центр
+                            y += (rowHeight - scaledSize.height()) / 2;
+                        } else if (format & 3) {
+                            // низ
+                            y += rowHeight - scaledSize.height();
+                        }
+
+                        painter.drawImage(
+                            QRectF(x, y, scaledSize.width(), scaledSize.height()),
+                            image);
+                    }
+                } else {
+                    // Текст
+                    QString text = content;
+
+                    // Устанавливаем стиль шрифта
+                    QFont defaultFont = painter.font();
+                    QFont font = painter.font();
+                    font.setPointSize(format & Small ? 12 : 14);
+                    if (format & Italic) font.setItalic(true);
+                    if (format & Bold) font.setBold(true);
+                    painter.setFont(font);
+
+                    // Определяем флаги выравнивания для текста
+                    int textAlignment = Qt::TextWordWrap; // Всегда включаем перенос слов
+
+                    // Вертикальное выравнивание
+                    switch (format & 3) {
+                        case AlignTop: textAlignment |= Qt::AlignTop;
+                            break;
+                        case AlignVCenter: textAlignment |= Qt::AlignVCenter;
+                            break;
+                        case AlignBottom: textAlignment |= Qt::AlignBottom;
+                            break;
+                        default:
+                            textAlignment |= Qt::AlignBaseline;
+                    }
+
+                    // Горизонтальное выравнивание
+                    switch (format & 12) {
+                        case AlignLeft: textAlignment |= Qt::AlignLeft;
+                            break;
+                        case AlignHCenter: textAlignment |= Qt::AlignHCenter;
+                            break;
+                        case AlignRight: textAlignment |= Qt::AlignRight;
+                            break;
+                        default:
+                            textAlignment |= Qt::AlignJustify;
+                    }
+
+                    // Рисуем текст с выравниванием и переносом
+                    if (format & VUse) {
+                        painter.drawText(cellRect, textAlignment, text);
+                    } else {
+                        drawTextWithWordWrap(cellRect, textAlignment, text);
+                    }
+
+                    // Восстанавливаем стандартный шрифт
+                    if (format & Italic || format & Bold) {
+                        painter.setFont(defaultFont);
+                    }
+                }
+            }
+            // Отладочная рамка вокруг ячейки
+            if (debug_ || drawGrid) {
+                painter.setPen(QPen(Qt::black, 1));
+                painter.drawRect(cellRect);
+            }
+        }
+
+        // Обновляем позицию по вертикали
+        posY += rowHeight;
+    }
+
     void addDebugText(QString &text) const {
         if (!writer) return;
-        for (int i = 0; i < 50; ++i) {
-            text += QString("___________%1\n").arg(i);
-        }
+        // for (int i = 0; i < 50; ++i) {
+        // text += QString("___________%1\n").arg(i);
+        // }
         text += QString("\npdfWriter.units: %1").arg(writer->pageLayout().units());
         const auto pdfWriterRect = writer->pageLayout().pageSize().rectPixels(
             writer->resolution());
@@ -473,6 +657,7 @@ struct PdfDocument final {
 
     void drawPageNumber() {
         if (!writer) return;
+        auto f = painter.font();
         const QFont pageNumberFont("Times", 12);
         painter.setFont(pageNumberFont);
         const QFontMetrics pageNumberMetrics(pageNumberFont);
@@ -481,6 +666,7 @@ struct PdfDocument final {
         painter.drawText(
             QPointF(pageRect.width() - pageNumberWidth - 20, pageRect.height() + 40),
             QString("%1").arg(pageNumber));
+        painter.setFont(f);
     }
 
     void newPage() {
@@ -489,6 +675,20 @@ struct PdfDocument final {
         writer->newPage();
         pageNumber++;
         posY = 0;
+    }
+
+    qreal width() const {
+        if (!writer) return 0;
+        return writer->width();
+    }
+
+    void setFont(const QFont &font) {
+        if (!writer) return;
+        painter.setFont(font);
+    }
+
+    void skip(const qreal i) {
+        posY += i;
     }
 };
 
@@ -563,23 +763,65 @@ private slots:
         m_pdfData.clear();
         //
         {
-            PdfDocument doc(&m_buffer);
+            using namespace Format;
+            Pdf doc(&m_buffer);
             doc.setPageSize(210 - 20 + 2, 297 - 20 + 2);
             doc.setMargins(11, 11, 1, 11);
             doc.begin();
-            // QString text = m_textEdit->toPlainText();
+            QString text = m_textEdit->toPlainText();
             // doc.addDebugText(text);
             // doc.paintDocument(text);
             // doc.newPage();
-            for (int i = 0; i < 5; ++i) {
-                doc.addText(0, 1000, "hello\nmy\nworld");
-                doc.addText(100, 500, "| 1 # # \n# # # # # # # # # #..........\n\n\n");
-                doc.addText(200, 500, "| 2 # # # \n\n\n# # # # # # # # #...........\n");
-                doc.addText(300, 500, "| 3 # # # # # # # # # # # #............");
-                doc.addText(400, 500, "| 4 # # # # # # # # # # # #........ ...");
-                doc.addText(600, 1500,
-                            "| 6 # # # # # #\n\n\n # # # # # # # # # # # # # # # # # #\n");
+            //
+            {
+                using namespace Format;
+                doc.setFont(QFont("Times", 14));
+                qreal w = doc.width();
+                doc.addTableRow({0, 230, 300, w / 2 - 50, w / 2 + 50, w - 300, w - 230, w},
+                                {
+                                    "../res/CUSTOM.png",
+                                    "",
+                                    // "ООО «ВС Инжиниринг»\n©ВС Сигнал. Версия: 1.0.0",
+                                    "Справочные данные организации Заказчика",
+                                    "",
+                                    "ООО «ВС Инжиниринг»\n©ВС Сигнал. Версия: 1.0.0",
+                                    "",
+                                    "../res/VS.png"
+                                },
+                                {
+                                    Picture, 0,
+                                    AlignVCenter + AlignLeft + Italic + VUse, 0,
+                                    AlignVCenter + AlignRight + Italic + VUse, 0,
+                                    Picture
+                                },
+                                230);
+                doc.skip(40);
+                doc.addTableRow({150, 700, w}, {
+                                    "Источник данных:",
+                                    "Завод_Установка_Агрегат_Точка Измерения"
+                                }, {AlignBottom + VUse, AlignBottom + Italic + Small + VUse});
+                doc.addTableRow({150, 700, w}, {
+                                    "Дата и время печати:",
+                                    "ДД.ММ.ГГГГ чч:мм:сс"
+                                }, {AlignBottom + VUse, AlignBottom + Italic + Small + VUse});
+                doc.addTableRow({150, w}, {"Рассчитанные значения:"}, {AlignBottom + VUse});
+                doc.addTableRow({0, 700, w}, {
+                                    "Дата и время печати:",
+                                    "ДД.ММ.ГГГГ чч:мм:сс"
+                                }, {AlignBottom + VUse, AlignBottom + Italic + Small + VUse},
+                                -1, true);
             }
+            /*
+                        for (int i = 0; i < 5; ++i) {
+                            doc.addText(0, 1000, "hello\nmy\nworld");
+                            doc.addText(100, 500, "| 1 # # \n# # # # # # # # # #..........\n\n\n");
+                            doc.addText(200, 500, "| 2 # # # \n\n\n# # # # # # # # #...........\n");
+                            doc.addText(300, 500, "| 3 # # # # # # # # # # # #............");
+                            doc.addText(400, 500, "| 4 # # # # # # # # # # # #........ ...");
+                            doc.addText(600, 1500,
+                                        "| 6 # # # # # #\n\n\n # # # # # # # # # # # # # # # # # #\n");
+                        }
+                        */
         }
 
         _save(m_pdfData);

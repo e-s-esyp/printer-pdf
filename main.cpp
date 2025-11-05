@@ -3,7 +3,6 @@
 #include <QPainter>
 #include <QRect>
 #include <QHBoxLayout>
-#include <QTextEdit>
 #include <QPushButton>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -14,9 +13,6 @@
 #include <QPageSize>
 #include <QBuffer>
 #include <QPdfWriter>
-#include <QTime>
-#include <QEvent>
-#include <QMap>
 #include <QTimer>
 #include <QSpinBox>
 #include <QLabel>
@@ -115,8 +111,8 @@ struct Pdf final {
 
     qreal textHeightManualWithNewlines(const QString &text, const qreal width,
                                        const qreal lineSpacing = 1.5) const {
-        QFontMetricsF fm(painter.font());
-        qreal lineHeight = fm.height() * lineSpacing;
+        const QFontMetricsF fm(painter.font());
+        const qreal lineHeight = fm.height() * lineSpacing;
         qreal totalHeight = 0;
 
         // Разбиваем текст на параграфы по символам переноса строки
@@ -280,7 +276,6 @@ struct Pdf final {
             // Обрабатываем строки параграфа
             QString paragraphFirstPart;
             QString paragraphSecondPart;
-            bool paragraphCompleted = true;
 
             for (int j = 0; j < lines.size(); j++) {
                 if (currentHeight + lineHeight <= maxHeight) {
@@ -290,7 +285,6 @@ struct Pdf final {
                     currentHeight += lineHeight;
                 } else {
                     // Строка не помещается - переносим во вторую часть
-                    paragraphCompleted = false;
                     for (int k = j; k < lines.size(); k++) {
                         if (!paragraphSecondPart.isEmpty()) paragraphSecondPart += "\n";
                         paragraphSecondPart += lines[k];
@@ -327,11 +321,11 @@ struct Pdf final {
 
     void addText(const qreal l, const qreal r, const QByteArray &text, const int format) {
         const auto w = r - l;
-        QString t = text;
         //
         {
+            QString t = text;
             using namespace Format;
-            QFont defaultFont = painter.font();
+            const QFont defaultFont = painter.font();
             QFont font = painter.font();
             font.setPointSize(format & Small ? 12 : 14);
             if (format & Italic) font.setItalic(true);
@@ -341,11 +335,11 @@ struct Pdf final {
                 auto p = splitTextByHeight(t, w, pageHeight - posY);
                 const auto h = calculateTextHeightAdvanced(p.first, w);
                 drawTextWithWordWrap(QRectF(l, posY, w, h), Qt::AlignLeft, t);
-                if (debug_) {
-                    QD << DUMP(p.first) << DUMP(p.second) << DUMP(h) << DUMP(w);
-                    painter.setPen(QPen(Qt::black, 1));
-                    painter.drawRect(QRectF(l, posY, w, h));
-                }
+#ifdef debug_
+                QD << DUMP(p.first) << DUMP(p.second) << DUMP(h) << DUMP(w);
+                painter.setPen(QPen(Qt::black, 1));
+                painter.drawRect(QRectF(l, posY, w, h));
+#endif
                 posY += h;
                 t = p.second;
                 if (t.size() > 0) {
@@ -563,7 +557,7 @@ struct Pdf final {
         }
 
         // Получаем общую высоту документа
-        qreal docHeight = textDoc.size().height();
+        const qreal docHeight = textDoc.size().height();
 
         // Проверяем, помещается ли весь абзац на текущей странице
         if (currentY + docHeight > pageHeight) {
@@ -573,7 +567,7 @@ struct Pdf final {
 
             while (remainingHeight > 0) {
                 qreal availableHeight = pageHeight - currentY;
-                qreal clipHeight = qMin(availableHeight, remainingHeight);
+                const qreal clipHeight = qMin(availableHeight, remainingHeight);
 
                 // Рисуем часть документа, которая помещается на текущей странице
                 painter.save();
@@ -804,21 +798,24 @@ class PdfApp final : public QMainWindow {
     Q_OBJECT
 
     // Элементы интерфейса
-    QTextEdit *m_textEdit{};
-    QPdfView *m_pdfView{};
-    QPushButton *m_createButton{};
-    QPushButton *m_openButton{};
-    QPushButton *m_printButton{};
-    QWidget *centralWidget{};
-    QVBoxLayout *mainLayout{};
-    QHBoxLayout *buttonLayout{};
-    QHBoxLayout *pageNavigationLayout{};
-    QSpinBox *m_pageSpinBox{};
-    QLabel *m_pageCountLabel{};
-    QSplitter *m_splitter{};
-    QBuffer m_buffer{};
-    QByteArray m_pdfData;
-    QPdfDocument m_document;
+    QTextEdit textEdit;
+    QPdfView pdfView;
+    QPushButton createButton;
+    QPushButton openButton;
+    QPushButton printButton;
+    QWidget centralWidget;
+    QVBoxLayout mainLayout;
+    QHBoxLayout buttonLayout;
+    QHBoxLayout pageNavigationLayout;
+    QWidget pageNavigationWidget;
+    QSpinBox pageSpinBox;
+    QLabel pageCountLabel;
+    QLabel notation;
+    QLabel pageLabel;
+    QSplitter splitter;
+    QBuffer buffer;
+    QByteArray pdfData;
+    QPdfDocument document;
 
 public:
     static void _saveImage(QPdfDocument *document) {
@@ -848,31 +845,32 @@ public:
         }
     }
 
-    explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
+    explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent),
+                                                 splitter(Qt::Vertical, &centralWidget) {
         setupUI();
         setupConnections();
     }
 
 private slots:
-    void updatePageNavigation() const {
-        const int pageCount = m_document.pageCount();
-        m_pageSpinBox->setRange(1, qMax(1, pageCount));
-        m_pageCountLabel->setText(QString(" / %1").arg(pageCount));
+    void updatePageNavigation() {
+        const int pageCount = document.pageCount();
+        pageSpinBox.setRange(1, qMax(1, pageCount));
+        pageCountLabel.setText(QString(" / %1").arg(pageCount));
         // В Qt 5.15 используем pageNavigation()
         if (pageCount > 0) {
             // Устанавливаем первую страницу
-            m_pdfView->pageNavigation()->setCurrentPage(0);
+            pdfView.pageNavigation()->setCurrentPage(0);
         }
         // Активируем/деактивируем спинбокс в зависимости от наличия страниц
-        m_pageSpinBox->setEnabled(pageCount > 0);
+        pageSpinBox.setEnabled(pageCount > 0);
     }
 
     void createPdf_B() {
-        m_pdfData.clear();
+        pdfData.clear();
         //
         {
             using namespace Format;
-            Pdf doc(&m_buffer);
+            Pdf doc(&buffer);
             doc.setPageSize(210 - 20 + 2, 297 - 20 + 2);
             doc.setMargins(11, 11, 1, 11);
             doc.begin(); {
@@ -939,26 +937,26 @@ private slots:
                 doc.addTableRow({150, w}, {"Примечание:"}, {AlignBottom + Italic + VUse});
                 doc.skip(-70);
                 doc.addText(0, w,
-                            "                                       " + m_textEdit->
+                            "                                       " + textEdit.
                             toPlainText().toUtf8(), Italic + Small);
             }
         }
 
-        _save(m_pdfData);
+        _save(pdfData);
 
         // Загружаем в документ
-        if (!m_buffer.open(QIODevice::ReadOnly)) {
+        if (!buffer.open(QIODevice::ReadOnly)) {
             QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для чтения");
             return;
         }
 
-        m_document.load(&m_buffer);
+        document.load(&buffer);
         updatePageNavigation();
-        QD << "done, создано страниц: " << m_document.pageCount();
+        QD << "done, создано страниц: " << document.pageCount();
     }
 
     void printPdf() {
-        if (m_document.pageCount() == 0) {
+        if (document.pageCount() == 0) {
             QMessageBox::warning(this, "Предупреждение", "Нет документа для печати");
             return;
         }
@@ -994,12 +992,12 @@ private slots:
             const bool isLandscape = printer.pageLayout().orientation() ==
                                      QPageLayout::Landscape;
 
-            for (int pageIndex = 0; pageIndex < m_document.pageCount(); ++pageIndex) {
+            for (int pageIndex = 0; pageIndex < document.pageCount(); ++pageIndex) {
                 if (pageIndex > 0) {
                     printer.newPage();
                 }
 
-                QSizeF pdfPageSize = m_document.pageSize(pageIndex);
+                QSizeF pdfPageSize = document.pageSize(pageIndex);
                 QRectF printerRect = printer.pageRect(QPrinter::DevicePixel);
 
                 // Корректировка размеров с учетом ориентации
@@ -1019,7 +1017,7 @@ private slots:
                                  static_cast<int>(pdfPageSize.height() * scale * 2));
 
                 // Рендерим страницу PDF
-                QImage image = m_document.render(pageIndex, renderSize);
+                QImage image = document.render(pageIndex, renderSize);
 
                 if (!image.isNull()) {
                     // Позиционирование с центрированием
@@ -1059,85 +1057,75 @@ private slots:
     void onPageChanged(const int page) const {
         // page в spinbox начинается с 1, а в QPdfView с 0
         const int pageIndex = page - 1;
-        if (pageIndex >= 0 && pageIndex < m_document.pageCount()) {
+        if (pageIndex >= 0 && pageIndex < document.pageCount()) {
             // В Qt 5.15 используем pageNavigation()
-            m_pdfView->pageNavigation()->setCurrentPage(pageIndex);
+            pdfView.pageNavigation()->setCurrentPage(pageIndex);
         }
     }
 
-    void onCurrentPageChanged(const int page) const {
+    void onCurrentPageChanged(const int page) {
         // Блокируем сигналы, чтобы избежать рекурсии
-        m_pageSpinBox->blockSignals(true);
-        m_pageSpinBox->setValue(page + 1); // Конвертируем из 0-based в 1-based
-        m_pageSpinBox->blockSignals(false);
+        pageSpinBox.blockSignals(true);
+        pageSpinBox.setValue(page + 1); // Конвертируем из 0-based в 1-based
+        pageSpinBox.blockSignals(false);
     }
 
 private:
+    void setupPageNavigation() {
+        // Панель навигации по страницам
+        pageLabel.setText("Страница:");
+        pageSpinBox.setRange(1, 1);
+        pageSpinBox.setValue(1);
+        pageSpinBox.setEnabled(false);
+        pageCountLabel.setText(" / 0");
+
+        pageNavigationLayout.addWidget(&pageLabel);
+        pageNavigationLayout.addWidget(&pageSpinBox);
+        pageNavigationLayout.addWidget(&pageCountLabel);
+        pageNavigationLayout.addStretch();
+        pageNavigationWidget.setLayout(&pageNavigationLayout);
+        pageNavigationWidget.setMaximumHeight(40);
+    }
+
     void setupUI() {
-        m_buffer.setBuffer(&m_pdfData);
-
-        centralWidget = new QWidget(this);
-        setCentralWidget(centralWidget);
-
-        mainLayout = new QVBoxLayout(centralWidget);
+        buffer.setBuffer(&pdfData);
+        setCentralWidget(&centralWidget);
+        centralWidget.setLayout(&mainLayout);
 
         // Создаем элементы управления
-        buttonLayout = new QHBoxLayout();
+        createButton.setText("Создать PDF");
+        openButton.setText("Открыть PDF");
+        printButton.setText("Печать");
+        setupPageNavigation();
+        buttonLayout.addWidget(&createButton);
+        buttonLayout.addWidget(&openButton);
+        buttonLayout.addWidget(&printButton);
+        buttonLayout.addWidget(&pageNavigationWidget);
 
-        // Панель навигации по страницам
-        pageNavigationLayout = new QHBoxLayout();
-        auto *pageLabel = new QLabel("Страница:");
-        m_pageSpinBox = new QSpinBox();
-        m_pageSpinBox->setRange(1, 1);
-        m_pageSpinBox->setValue(1);
-        m_pageSpinBox->setEnabled(false);
-        m_pageCountLabel = new QLabel(" / 0");
-
-        pageNavigationLayout->addWidget(pageLabel);
-        pageNavigationLayout->addWidget(m_pageSpinBox);
-        pageNavigationLayout->addWidget(m_pageCountLabel);
-        pageNavigationLayout->addStretch();
-        auto *pageNavigationWidget = new QWidget();
-        pageNavigationWidget->setLayout(pageNavigationLayout);
-        pageNavigationWidget->setMaximumHeight(40);
+        notation.setText("Добавьте примечание:");
 
         // Создаем splitter для горизонтального расположения
-        m_splitter = new QSplitter(Qt::Vertical, centralWidget);
+        textEdit.setPlaceholderText("Введите текст для создания PDF...");
 
-        m_textEdit = new QTextEdit();
-        m_textEdit->setPlaceholderText("Введите текст для создания PDF...");
         // Устанавливаем шрифт соответствующий PDF
         const QFont textEditFont("Times", 12);
-        m_textEdit->setFont(textEditFont);
+        textEdit.setFont(textEditFont);
 
-        m_pdfView = new QPdfView();
-        m_pdfView->setDocument(&m_document);
+        // m_pdfView = new QPdfView();
+        pdfView.setDocument(&document);
 
         // Добавляем виджеты в splitter
-        m_splitter->addWidget(m_textEdit);
-        m_splitter->addWidget(m_pdfView);
+        splitter.addWidget(&textEdit);
+        splitter.addWidget(&pdfView);
 
-        // Устанавливаем начальные пропорции (50/50)
-        // m_splitter->setSizes({1, 3});
-        m_splitter->setStretchFactor(0, 20);
-        m_splitter->setStretchFactor(1, 100);
+        splitter.setStretchFactor(0, 20);
+        splitter.setStretchFactor(1, 100);
 
-        auto *createButton = new QPushButton("Создать PDF");
-        auto *openButton = new QPushButton("Открыть PDF");
-        auto *printButton = new QPushButton("Печать");
-
-        buttonLayout->addWidget(createButton);
-        buttonLayout->addWidget(openButton);
-        buttonLayout->addWidget(printButton);
-        buttonLayout->addWidget(pageNavigationWidget);
-
-        mainLayout->addLayout(buttonLayout);
-        mainLayout->addWidget(m_splitter); // Добавляем splitter вместо отдельных виджетов
+        mainLayout.addLayout(&buttonLayout);
+        mainLayout.addWidget(&notation);
+        mainLayout.addWidget(&splitter); // Добавляем splitter вместо отдельных виджетов
 
         // Сохраняем указатели на кнопки для соединений
-        m_createButton = createButton;
-        m_openButton = openButton;
-        m_printButton = printButton;
 
         setWindowTitle("PDF приложение Qt5");
         setGeometry(QRect(1920, 0, 960, 1080));
@@ -1145,32 +1133,32 @@ private:
     }
 
     void setupConnections() {
-        connect(m_createButton, &QPushButton::clicked, this, &PdfApp::createPdf_B);
-        connect(m_openButton, &QPushButton::clicked, this, &PdfApp::openPdf);
-        connect(m_printButton, &QPushButton::clicked, this, &PdfApp::printPdf);
-        connect(m_pageSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
+        connect(&createButton, &QPushButton::clicked, this, &PdfApp::createPdf_B);
+        connect(&openButton, &QPushButton::clicked, this, &PdfApp::openPdf);
+        connect(&printButton, &QPushButton::clicked, this, &PdfApp::printPdf);
+        connect(&pageSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
                 this, &PdfApp::onPageChanged);
 
-        connect(&m_document, &QPdfDocument::statusChanged, this,
+        connect(&document, &QPdfDocument::statusChanged, this,
                 [this](const QPdfDocument::Status status) {
                     QD << DUMP(status);
-                    if (m_document.status() == QPdfDocument::Error) {
-                        qDebug() << "Ошибка при загрузке документа:" << m_document.error();
-                    } else if (m_document.status() == QPdfDocument::Ready) {
+                    if (document.status() == QPdfDocument::Error) {
+                        qDebug() << "Ошибка при загрузке документа:" << document.error();
+                    } else if (document.status() == QPdfDocument::Ready) {
                         updatePageNavigation();
                     }
                 });
 
-        connect(&m_document, &QPdfDocument::pageCountChanged, this,
+        connect(&document, &QPdfDocument::pageCountChanged, this,
                 &PdfApp::updatePageNavigation);
 
         // В Qt 5.15 используем pageNavigation() вместо pageNavigator()
-        connect(m_pdfView->pageNavigation(), &QPdfPageNavigation::currentPageChanged,
+        connect(pdfView.pageNavigation(), &QPdfPageNavigation::currentPageChanged,
                 this, &PdfApp::onCurrentPageChanged);
     }
 
     void loadPdfForView(const QString &fileName) {
-        if (m_document.load(fileName) != QPdfDocument::NoError) {
+        if (document.load(fileName) != QPdfDocument::NoError) {
             QMessageBox::critical(this, "Ошибка",
                                   "Не удалось загрузить PDF файл: " + fileName);
         } else {
@@ -1236,7 +1224,6 @@ bool debug = true;
 void myMessageHandler(const QtMsgType type, const QMessageLogContext &context,
                       const QString &msg) {
     if (!debug) return;
-    QByteArray localMsg = msg.toLocal8Bit();
     QString logLevel;
     switch (type) {
         case QtDebugMsg: logLevel = "DEBUG";

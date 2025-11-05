@@ -851,6 +851,16 @@ public:
         setupConnections();
     }
 
+    ~PdfApp() override {
+        QD;
+        // setCentralWidget(nullptr);
+        // mainLayout.addLayout(nullptr);
+        // pageNavigationWidget.setLayout(nullptr);
+        QD << splitter.count();
+        splitter.insertWidget(0, nullptr);
+        splitter.insertWidget(1, nullptr);
+    }
+
 private slots:
     void updatePageNavigation() {
         const int pageCount = document.pageCount();
@@ -1111,7 +1121,6 @@ private:
         const QFont textEditFont("Times", 12);
         textEdit.setFont(textEditFont);
 
-        // m_pdfView = new QPdfView();
         pdfView.setDocument(&document);
 
         // Добавляем виджеты в splitter

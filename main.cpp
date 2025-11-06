@@ -803,34 +803,25 @@ struct Pdf final {
     }
 };
 
-class MySplitter final : public QSplitter {
-public:
-    MySplitter(const Qt::Orientation vertical, QWidget *widget): QSplitter(vertical, widget) {
-    }
-
-    ~MySplitter() override = default;
-};
-
 class PdfApp final : public QMainWindow {
     Q_OBJECT
 
     // Элементы интерфейса
-    QTextEdit textEdit;
-    QPdfView pdfView;
-    QPushButton createButton;
-    QPushButton openButton;
-    QPushButton printButton;
-    QWidget centralWidget;
-    QVBoxLayout mainLayout;
-    QHBoxLayout buttonLayout;
-    QHBoxLayout pageNavigationLayout;
-    QWidget pageNavigationWidget;
-    QSpinBox pageSpinBox;
-    QLabel pageCountLabel;
-    QLabel notation;
-    QLabel pageLabel;
-    MySplitter splitter;
-    QBuffer buffer;
+    QTextEdit *textEdit{};
+    QPdfView *pdfView{};
+    QPushButton *createButton{};
+    QPushButton *openButton{};
+    QPushButton *printButton{};
+    QWidget *centralWidget{};
+    QWidget *pageNavigationWidget{};
+    QVBoxLayout *mainLayout{};
+    QHBoxLayout *buttonLayout{};
+    QHBoxLayout *pageNavigationLayout{};
+    QSpinBox *pageSpinBox{};
+    QLabel *pageCountLabel{};
+    QLabel *pageLabel{};
+    QSplitter *splitter{};
+    QBuffer buffer{};
     QByteArray pdfData;
     QPdfDocument document;
 
@@ -862,8 +853,7 @@ public:
         }
     }
 
-    explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent),
-                                                 splitter(Qt::Vertical, &centralWidget) {
+    explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
         setupUI();
         setupConnections();
     }
@@ -871,17 +861,18 @@ public:
     ~PdfApp() override {
         QD;
         takeCentralWidget();
-        // QD;
-        // QLayout* layout = pageNavigationWidget.layout();
-        // if (layout) {
-        // layout->setParent(nullptr);
-        // QLayoutItem* item;
-        // while ((item = layout->takeAt(0)) != nullptr) {
-        // if (QWidget* childWidget = item->widget()) {
-        // childWidget->setParent(nullptr);
-        // }
-        // }
-        // }
+        QD;
+        QLayout *layout = pageNavigationWidget->layout();
+        pageNavigationWidget->setLayout(new QVBoxLayout());
+        if (layout) {
+            layout->setParent(nullptr);
+            QLayoutItem *item;
+            while ((item = layout->takeAt(0)) != nullptr) {
+                if (QWidget *childWidget = item->widget()) {
+                    childWidget->setParent(nullptr);
+                }
+            }
+        }
         // QD << splitter.count();
         // splitter.insertWidget(0, nullptr);
         // splitter.insertWidget(1, nullptr);
@@ -889,17 +880,17 @@ public:
     }
 
 private slots:
-    void updatePageNavigation() {
+    void updatePageNavigation() const {
         const int pageCount = document.pageCount();
-        pageSpinBox.setRange(1, qMax(1, pageCount));
-        pageCountLabel.setText(QString(" / %1").arg(pageCount));
+        pageSpinBox->setRange(1, qMax(1, pageCount));
+        pageCountLabel->setText(QString(" / %1").arg(pageCount));
         // В Qt 5.15 используем pageNavigation()
         if (pageCount > 0) {
             // Устанавливаем первую страницу
-            pdfView.pageNavigation()->setCurrentPage(0);
+            pdfView->pageNavigation()->setCurrentPage(0);
         }
         // Активируем/деактивируем спинбокс в зависимости от наличия страниц
-        pageSpinBox.setEnabled(pageCount > 0);
+        pageSpinBox->setEnabled(pageCount > 0);
     }
 
     void createPdf_B() {
@@ -986,7 +977,7 @@ private slots:
                 doc.addTableRow({150, w}, {"Примечание:"}, {AlignBottom + Italic + VUse});
                 doc.skip(-70);
                 doc.addText(0, w,
-                            "                                       " + textEdit.
+                            "                                       " + textEdit->
                             toPlainText().toUtf8(), Italic + Small);
             }
         }
@@ -1108,72 +1099,81 @@ private slots:
         const int pageIndex = page - 1;
         if (pageIndex >= 0 && pageIndex < document.pageCount()) {
             // В Qt 5.15 используем pageNavigation()
-            pdfView.pageNavigation()->setCurrentPage(pageIndex);
+            pdfView->pageNavigation()->setCurrentPage(pageIndex);
         }
     }
 
-    void onCurrentPageChanged(const int page) {
+    void onCurrentPageChanged(const int page) const {
         // Блокируем сигналы, чтобы избежать рекурсии
-        pageSpinBox.blockSignals(true);
-        pageSpinBox.setValue(page + 1); // Конвертируем из 0-based в 1-based
-        pageSpinBox.blockSignals(false);
+        pageSpinBox->blockSignals(true);
+        pageSpinBox->setValue(page + 1); // Конвертируем из 0-based в 1-based
+        pageSpinBox->blockSignals(false);
     }
 
 private:
     void setupPageNavigation() {
         // Панель навигации по страницам
-        pageLabel.setText("Страница:");
-        pageSpinBox.setRange(1, 1);
-        pageSpinBox.setValue(1);
-        pageSpinBox.setEnabled(false);
-        pageCountLabel.setText(" / 0");
-
-        pageNavigationLayout.addWidget(&pageLabel);
-        pageNavigationLayout.addWidget(&pageSpinBox);
-        pageNavigationLayout.addWidget(&pageCountLabel);
-        pageNavigationLayout.addStretch();
-        pageNavigationWidget.setLayout(&pageNavigationLayout);
-        pageNavigationWidget.setMaximumHeight(40);
+        pageLabel = new QLabel("Страница:", this);
+        pageSpinBox = new QSpinBox(this);
+        pageSpinBox->setRange(1, 1);
+        pageSpinBox->setValue(1);
+        pageSpinBox->setEnabled(false);
+        pageCountLabel = new QLabel(" / 0", this);
+        pageNavigationLayout = new QHBoxLayout();
+        pageNavigationLayout->addWidget(pageLabel);
+        pageNavigationLayout->addWidget(pageSpinBox);
+        pageNavigationLayout->addWidget(pageCountLabel);
+        pageNavigationLayout->addStretch();
+        pageNavigationWidget = new QWidget();
+        pageNavigationWidget->setLayout(pageNavigationLayout);
+        pageNavigationWidget->setMaximumHeight(40);
     }
 
     void setupUI() {
         buffer.setBuffer(&pdfData);
-        setCentralWidget(&centralWidget);
-        centralWidget.setLayout(&mainLayout);
+
+        centralWidget = new QWidget(this);
+        setCentralWidget(centralWidget);
+
+        mainLayout = new QVBoxLayout(centralWidget);
 
         // Создаем элементы управления
-        createButton.setText("Создать PDF");
-        openButton.setText("Открыть PDF");
-        printButton.setText("Печать");
-        setupPageNavigation();
-        buttonLayout.addWidget(&createButton);
-        buttonLayout.addWidget(&openButton);
-        buttonLayout.addWidget(&printButton);
-        buttonLayout.addWidget(&pageNavigationWidget);
+        buttonLayout = new QHBoxLayout();
 
-        notation.setText("Добавьте примечание:");
+        setupPageNavigation();
 
         // Создаем splitter для горизонтального расположения
-        textEdit.setPlaceholderText("Введите текст для создания PDF...");
+        splitter = new QSplitter(Qt::Vertical, centralWidget);
 
+        textEdit = new QTextEdit();
+        textEdit->setPlaceholderText("Введите текст для создания PDF...");
         // Устанавливаем шрифт соответствующий PDF
         const QFont textEditFont("Times", 12);
-        textEdit.setFont(textEditFont);
+        textEdit->setFont(textEditFont);
 
-        pdfView.setDocument(&document);
+        pdfView = new QPdfView();
+        pdfView->setDocument(&document);
 
         // Добавляем виджеты в splitter
-        splitter.addWidget(&textEdit);
-        splitter.addWidget(&pdfView);
+        splitter->addWidget(textEdit);
+        splitter->addWidget(pdfView);
 
-        splitter.setStretchFactor(0, 20);
-        splitter.setStretchFactor(1, 100);
+        // Устанавливаем начальные пропорции (50/50)
+        // m_splitter->setSizes({1, 3});
+        splitter->setStretchFactor(0, 20);
+        splitter->setStretchFactor(1, 100);
 
-        mainLayout.addLayout(&buttonLayout);
-        mainLayout.addWidget(&notation);
-        mainLayout.addWidget(&splitter); // Добавляем splitter вместо отдельных виджетов
+        createButton = new QPushButton("Создать PDF");
+        openButton = new QPushButton("Открыть PDF");
+        printButton = new QPushButton("Печать");
 
-        // Сохраняем указатели на кнопки для соединений
+        buttonLayout->addWidget(createButton);
+        buttonLayout->addWidget(openButton);
+        buttonLayout->addWidget(printButton);
+        buttonLayout->addWidget(pageNavigationWidget);
+
+        mainLayout->addLayout(buttonLayout);
+        mainLayout->addWidget(splitter); // Добавляем splitter вместо отдельных виджетов
 
         setWindowTitle("PDF приложение Qt5");
         setGeometry(QRect(1920, 0, 960, 1080));
@@ -1181,10 +1181,10 @@ private:
     }
 
     void setupConnections() {
-        connect(&createButton, &QPushButton::clicked, this, &PdfApp::createPdf_B);
-        connect(&openButton, &QPushButton::clicked, this, &PdfApp::openPdf);
-        connect(&printButton, &QPushButton::clicked, this, &PdfApp::printPdf);
-        connect(&pageSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
+        connect(createButton, &QPushButton::clicked, this, &PdfApp::createPdf_B);
+        connect(openButton, &QPushButton::clicked, this, &PdfApp::openPdf);
+        connect(printButton, &QPushButton::clicked, this, &PdfApp::printPdf);
+        connect(pageSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
                 this, &PdfApp::onPageChanged);
         connect(&document, &QPdfDocument::statusChanged, this,
                 [this](const QPdfDocument::Status status) {
@@ -1198,7 +1198,7 @@ private:
         connect(&document, &QPdfDocument::pageCountChanged, this,
                 &PdfApp::updatePageNavigation);
         // В Qt 5.15 используем pageNavigation() вместо pageNavigator()
-        connect(pdfView.pageNavigation(), &QPdfPageNavigation::currentPageChanged,
+        connect(pdfView->pageNavigation(), &QPdfPageNavigation::currentPageChanged,
                 this, &PdfApp::onCurrentPageChanged);
     }
 

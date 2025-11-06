@@ -23,8 +23,9 @@
 #include <QDebug>
 #include <QRadioButton>
 #include <QGroupBox>
+#include <QTimer>
 
-#define debug_
+// #define debug_
 
 #define QD qDebug()
 #define DUMP(var)  #var << ": " << (var) << " "
@@ -687,7 +688,7 @@ struct Pdf final {
         painter.setFont(pageNumberFont);
         // Используем встроенное разбиение на страницы QTextDocument
         const int pageCount = document.pageCount();
-        QD << DUMP(pageCount);
+        // QD << DUMP(pageCount);
 
         QTextCursor cursor(&document);
         cursor.clearSelection();
@@ -805,14 +806,11 @@ struct Pdf final {
     }
 };
 
-class PdfApp final : public QMainWindow {
+struct PdfApp final : public QMainWindow {
     Q_OBJECT
 
-    class OrientationWidget final : public QWidget {
-    public:
+    struct OrientationWidget final : public QWidget {
         int state = 0;
-
-    private:
         PdfApp *wid;
         QRadioButton *portraitRadio;
         QRadioButton *landscapeRadio;
@@ -820,7 +818,6 @@ class PdfApp final : public QMainWindow {
         QVBoxLayout *radioLayout;
         QGroupBox *orientationGroup;
 
-    public:
         explicit OrientationWidget(PdfApp *w, QWidget *parent = nullptr): QWidget(parent),
             wid(w) {
             // Создаем главный компоновщик
@@ -843,21 +840,6 @@ class PdfApp final : public QMainWindow {
 
             // Добавляем все в главную компоновку
             mainLayout->addWidget(orientationGroup);
-
-            // Подключаем сигналы радиокнопок к слоту
-            connect(portraitRadio, &QRadioButton::toggled, this,
-                    &OrientationWidget::onOrientationChanged);
-            connect(landscapeRadio, &QRadioButton::toggled, this,
-                    &OrientationWidget::onOrientationChanged);
-        }
-
-        void onOrientationChanged() {
-            if (portraitRadio->isChecked()) {
-                state = 0;
-            } else {
-                state = 1;
-            }
-            wid->createPdf_B();
         }
     };
 
@@ -879,8 +861,10 @@ class PdfApp final : public QMainWindow {
     QLabel *pageLabel{};
     QSplitter *splitter{};
     OrientationWidget *orientation{};
-    QBuffer buffer{};
-    QByteArray pdfData;
+    QBuffer bufferH{};
+    QBuffer bufferV{};
+    QByteArray pdfDataH;
+    QByteArray pdfDataV;
     QPdfDocument document;
 
 public:
@@ -919,11 +903,19 @@ public:
 
 public slots:
     void createPdf_B() {
-        pdfData.clear();
+        if (orientation->portraitRadio->isChecked()) {
+            orientation->state = 0;
+        } else {
+            orientation->state = 1;
+        }
         //
         {
             using namespace Format;
-            Pdf doc(&buffer);
+            if (orientation->state == 0) {
+            }
+            pdfData.clear();
+            Pdf docH(&bufferH);
+            buffer.open(QIODevice::WriteOnly);
             if (orientation->state == 0) {
                 doc.setPageSize(210 - 20 + 2, 297 - 20 + 2);
             } else {
@@ -1023,8 +1015,7 @@ public slots:
 
         document.load(&buffer);
         updatePageNavigation();
-        updatePageNavigation();
-        QD << "done, создано страниц: " << document.pageCount();
+        pdfView->repaint();
     }
 
 private slots:
@@ -1061,14 +1052,12 @@ private slots:
         QPageLayout pageLayout;
         // Устанавливаем мм как единицы измерения
         pageLayout.setPageSize(QPageSize(QPageSize::A4)); // работает странно, не убирать
-        QD << pageLayout.pageSize();
         pageLayout.setUnits(QPageLayout::Millimeter);
         pageLayout.setMargins(QMarginsF(9 + 4, 4 + 4, 1 + 4, 6 + 4)); // Отступы в мм
         pageLayout.setOrientation(orientation->state == 0
                                       ? QPageLayout::Orientation::Portrait
                                       : QPageLayout::Orientation::Landscape);
         printer.setPageLayout(pageLayout);
-        QD << printer.pageLayout().pageSize().id();
 
         QPrintDialog printDialog(&printer, this);
         printDialog.setWindowTitle("Печать документа");
@@ -1216,6 +1205,7 @@ private:
 
         pdfView = new QPdfView();
         pdfView->setDocument(&document);
+        pdfView->setPageMode(QPdfView::PageMode::MultiPage);
 
         // Создаем splitter для горизонтального расположения
         splitter = new QSplitter(Qt::Vertical, &centralWidget);
@@ -1230,7 +1220,8 @@ private:
     }
 
     void setupUI() {
-        buffer.setBuffer(&pdfData);
+        bufferH.setBuffer(&pdfDataH);
+        bufferV.setBuffer(&pdfDataV);
         setCentralWidget(&centralWidget);
 
         mainLayout = new QVBoxLayout(&centralWidget);
@@ -1257,6 +1248,7 @@ private:
                         qDebug() << "Ошибка при загрузке документа:" << document.error();
                     } else if (document.status() == QPdfDocument::Ready) {
                         updatePageNavigation();
+                        pdfView->repaint();
                     }
                 });
         connect(&document, &QPdfDocument::pageCountChanged, this,
@@ -1264,7 +1256,26 @@ private:
         // В Qt 5.15 используем pageNavigation() вместо pageNavigator()
         connect(pdfView->pageNavigation(), &QPdfPageNavigation::currentPageChanged,
                 this, &PdfApp::onCurrentPageChanged);
-        // connect(orientation, )
+        // Подключаем сигналы радиокнопок к слоту
+        // connect(orientation->portraitRadio, &QRadioButton::toggled, this, [this] {
+        //     if (orientation->portraitRadio->isChecked()) {
+        //         orientation->state = 0;
+        //     } else {
+        //         orientation->state = 1;
+        //     }
+        // });
+        // connect(orientation->landscapeRadio, &QRadioButton::toggled, this, [this] {
+        //     if (orientation->portraitRadio->isChecked()) {
+        //         orientation->state = 0;
+        //     } else {
+        //         orientation->state = 1;
+        //     }
+        //     createPdf_B();
+        // });
+        connect(orientation->portraitRadio, &QRadioButton::toggled, this,
+                &PdfApp::createPdf_B);
+        connect(orientation->landscapeRadio, &QRadioButton::toggled, this,
+                &PdfApp::createPdf_B);
     }
 #ifdef debug_
     void loadPdfForView(const QString &fileName) {

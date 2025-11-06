@@ -812,7 +812,7 @@ class PdfApp final : public QMainWindow {
     QPushButton *createButton{};
     QPushButton *openButton{};
     QPushButton *printButton{};
-    QWidget *centralWidget{};
+    QWidget centralWidget{};
     QWidget *pageNavigationWidget{};
     QVBoxLayout *mainLayout{};
     QHBoxLayout *buttonLayout{};
@@ -856,27 +856,6 @@ public:
     explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
         setupUI();
         setupConnections();
-    }
-
-    ~PdfApp() override {
-        QD;
-        takeCentralWidget();
-        QD;
-        QLayout *layout = pageNavigationWidget->layout();
-        pageNavigationWidget->setLayout(new QVBoxLayout());
-        if (layout) {
-            layout->setParent(nullptr);
-            QLayoutItem *item;
-            while ((item = layout->takeAt(0)) != nullptr) {
-                if (QWidget *childWidget = item->widget()) {
-                    childWidget->setParent(nullptr);
-                }
-            }
-        }
-        // QD << splitter.count();
-        // splitter.insertWidget(0, nullptr);
-        // splitter.insertWidget(1, nullptr);
-        QD;
     }
 
 private slots:
@@ -1131,22 +1110,17 @@ private:
 
     void setupUI() {
         buffer.setBuffer(&pdfData);
-
-        centralWidget = new QWidget(this);
-        setCentralWidget(centralWidget);
-
-        mainLayout = new QVBoxLayout(centralWidget);
+        // centralWidget = new QWidget(this);
+        setCentralWidget(&centralWidget);
+        mainLayout = new QVBoxLayout(&centralWidget);
 
         // Создаем элементы управления
         buttonLayout = new QHBoxLayout();
-
         setupPageNavigation();
-
-        // Создаем splitter для горизонтального расположения
-        splitter = new QSplitter(Qt::Vertical, centralWidget);
 
         textEdit = new QTextEdit();
         textEdit->setPlaceholderText("Введите текст для создания PDF...");
+
         // Устанавливаем шрифт соответствующий PDF
         const QFont textEditFont("Times", 12);
         textEdit->setFont(textEditFont);
@@ -1154,6 +1128,8 @@ private:
         pdfView = new QPdfView();
         pdfView->setDocument(&document);
 
+        // Создаем splitter для горизонтального расположения
+        splitter = new QSplitter(Qt::Vertical, &centralWidget);
         // Добавляем виджеты в splitter
         splitter->addWidget(textEdit);
         splitter->addWidget(pdfView);

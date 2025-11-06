@@ -22,7 +22,7 @@
 #include <QSplitter>
 #include <QDebug>
 
-#define debug_ false
+// #define debug_
 
 #define QD qDebug()
 #define DUMP(var)  #var << ": " << (var) << " "
@@ -509,7 +509,10 @@ struct Pdf final {
                 }
             }
             // Отладочная рамка вокруг ячейки
-            if (debug_ || drawGrid) {
+#ifndef debug_
+            if (drawGrid)
+#endif
+            {
                 painter.setPen(QPen(Qt::black, 1));
                 painter.drawRect(cellRect);
             }
@@ -576,7 +579,10 @@ struct Pdf final {
                 painter.restore();
 
                 // Отладочная рамка
-                if (debug_ || drawBorders) {
+#ifndef debug_
+                if (drawBorders)
+#endif
+                {
                     painter.setPen(QPen(Qt::blue, 1));
                     painter.drawRect(QRectF(left, currentY, width, clipHeight));
                 }
@@ -601,7 +607,10 @@ struct Pdf final {
             painter.restore();
 
             // Отладочная рамка
-            if (debug_ || drawBorders) {
+#ifndef debug_
+            if (drawBorders)
+#endif
+            {
                 painter.setPen(QPen(Qt::blue, 1));
                 painter.drawRect(QRectF(left, currentY, width, docHeight));
             }
@@ -794,6 +803,14 @@ struct Pdf final {
     }
 };
 
+class MySplitter final : public QSplitter {
+public:
+    MySplitter(const Qt::Orientation vertical, QWidget *widget): QSplitter(vertical, widget) {
+    }
+
+    ~MySplitter() override = default;
+};
+
 class PdfApp final : public QMainWindow {
     Q_OBJECT
 
@@ -812,7 +829,7 @@ class PdfApp final : public QMainWindow {
     QLabel pageCountLabel;
     QLabel notation;
     QLabel pageLabel;
-    QSplitter splitter;
+    MySplitter splitter;
     QBuffer buffer;
     QByteArray pdfData;
     QPdfDocument document;
@@ -853,12 +870,22 @@ public:
 
     ~PdfApp() override {
         QD;
-        // setCentralWidget(nullptr);
-        // mainLayout.addLayout(nullptr);
-        // pageNavigationWidget.setLayout(nullptr);
-        QD << splitter.count();
-        splitter.insertWidget(0, nullptr);
-        splitter.insertWidget(1, nullptr);
+        takeCentralWidget();
+        // QD;
+        // QLayout* layout = pageNavigationWidget.layout();
+        // if (layout) {
+        // layout->setParent(nullptr);
+        // QLayoutItem* item;
+        // while ((item = layout->takeAt(0)) != nullptr) {
+        // if (QWidget* childWidget = item->widget()) {
+        // childWidget->setParent(nullptr);
+        // }
+        // }
+        // }
+        // QD << splitter.count();
+        // splitter.insertWidget(0, nullptr);
+        // splitter.insertWidget(1, nullptr);
+        QD;
     }
 
 private slots:
@@ -935,7 +962,19 @@ private slots:
                                 },
                                 65, true);
                 doc.skip(100);
-                doc.addTableRow({0, w}, {"../res/Plot.png"}, {Picture}, w);
+                // doc.addTableRow({0, w}, {"../res/Plot.png"}, {Picture}, w);
+                //
+                {
+                    doc.painter.save();
+                    // ⚙️ ИЗМЕНЕНИЕ МАСШТАБА
+                    doc.painter.scale(2.2, 1);
+                    // 📐 ИЗМЕНЕНИЕ ПОЛОЖЕНИЯ
+                    doc.painter.translate(0, doc.posY);
+                    // 🖼️ Рендеринг виджета
+                    this->render(&doc.painter);
+                    doc.painter.restore();
+                }
+                doc.skip(1100);
                 doc.addTableRow({0, w}, {"Подпись рисунка"}, {
                                     AlignBottom + AlignHCenter + Small + Italic
                                 });
@@ -943,7 +982,7 @@ private slots:
                                     "Алгоритмы обработки:",
                                     "ФНЧ 1000 Гц, ФВЧ 5 Гц"
                                 }, {AlignBottom + VUse, AlignBottom + Italic + Small + VUse});
-                doc.skip(150);
+                doc.skip(50);
                 doc.addTableRow({150, w}, {"Примечание:"}, {AlignBottom + Italic + VUse});
                 doc.skip(-70);
                 doc.addText(0, w,

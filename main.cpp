@@ -806,19 +806,19 @@ struct Pdf final {
     }
 };
 
-struct PdfApp final : public QMainWindow {
+struct PdfPrinter final : public QMainWindow {
     Q_OBJECT
 
     struct OrientationWidget final : public QWidget {
         int state = 0;
-        PdfApp *wid;
+        PdfPrinter *wid;
         QRadioButton *portraitRadio;
         QRadioButton *landscapeRadio;
         QVBoxLayout *mainLayout;
         QVBoxLayout *radioLayout;
         QGroupBox *orientationGroup;
 
-        explicit OrientationWidget(PdfApp *w, QWidget *parent = nullptr): QWidget(parent),
+        explicit OrientationWidget(PdfPrinter *w, QWidget *parent = nullptr): QWidget(parent),
             wid(w) {
             // Создаем главный компоновщик
             mainLayout = new QVBoxLayout(this);
@@ -861,10 +861,10 @@ struct PdfApp final : public QMainWindow {
     QLabel *pageLabel{};
     QSplitter *splitter{};
     OrientationWidget *orientation{};
-    QBuffer bufferH{};
     QBuffer bufferV{};
-    QByteArray pdfDataH;
+    QBuffer bufferH{};
     QByteArray pdfDataV;
+    QByteArray pdfDataH;
     QPdfDocument document;
 
 public:
@@ -884,10 +884,10 @@ public:
         }
     }
 
-    static void _save(const QByteArray &data) {
+    static void _save(const QByteArray *data) {
         QFile file("tmp.pdf");
         if (file.open(QIODevice::WriteOnly)) {
-            file.write(data);
+            file.write(*data);
             file.close();
             QD << "Файл успешно сохранен";
         } else {
@@ -895,7 +895,7 @@ public:
         }
     }
 
-    explicit PdfApp(QWidget *parent = nullptr) : QMainWindow(parent) {
+    explicit PdfPrinter(QWidget *parent = nullptr) : QMainWindow(parent) {
         setupUI();
         setupConnections();
         createPdf_B();
@@ -908,14 +908,14 @@ public slots:
         } else {
             orientation->state = 1;
         }
+        QBuffer *buffer = orientation->state == 0 ? &bufferV : &bufferH;
+        QByteArray*pdfData =orientation->state == 0 ? &pdfDataV : &pdfDataH;
         //
         {
             using namespace Format;
-            if (orientation->state == 0) {
-            }
-            pdfData.clear();
-            Pdf docH(&bufferH);
-            buffer.open(QIODevice::WriteOnly);
+            pdfData->clear();
+            Pdf doc(buffer);
+            buffer->open(QIODevice::WriteOnly);
             if (orientation->state == 0) {
                 doc.setPageSize(210 - 20 + 2, 297 - 20 + 2);
             } else {
@@ -998,24 +998,22 @@ public slots:
                                 }, {AlignBottom + VUse, AlignBottom + Italic + Small + VUse});
                 doc.skip(50);
                 doc.addTableRow({150, w}, {"Примечание:"}, {AlignBottom + Italic + VUse});
-                doc.skip(-70);
+                doc.skip(-67);
                 doc.addText(0, w,
                             "                                       " + textEdit->
                             toPlainText().toUtf8(), Italic + Small);
             }
         }
-
         _save(pdfData);
-
         // Загружаем в документ
-        if (!buffer.open(QIODevice::ReadOnly)) {
+        if (!buffer->open(QIODevice::ReadOnly)) {
             QMessageBox::critical(this, "Ошибка", "Не удалось открыть буфер для чтения");
             return;
         }
-
-        document.load(&buffer);
+        document.load(buffer);
         updatePageNavigation();
         pdfView->repaint();
+        repaint();
     }
 
 private slots:
@@ -1234,13 +1232,13 @@ private:
     }
 
     void setupConnections() {
-        connect(createButton, &QPushButton::clicked, this, &PdfApp::createPdf_B);
+        connect(createButton, &QPushButton::clicked, this, &PdfPrinter::createPdf_B);
 #ifdef debug_
         connect(openButton, &QPushButton::clicked, this, &PdfApp::openPdf);
 #endif
-        connect(printButton, &QPushButton::clicked, this, &PdfApp::printPdf);
+        connect(printButton, &QPushButton::clicked, this, &PdfPrinter::printPdf);
         connect(pageSpinBox, QOverload<int>::of(&QSpinBox::valueChanged),
-                this, &PdfApp::onPageChanged);
+                this, &PdfPrinter::onPageChanged);
         connect(&document, &QPdfDocument::statusChanged, this,
                 [this](const QPdfDocument::Status status) {
                     QD << DUMP(status);
@@ -1252,10 +1250,10 @@ private:
                     }
                 });
         connect(&document, &QPdfDocument::pageCountChanged, this,
-                &PdfApp::updatePageNavigation);
+                &PdfPrinter::updatePageNavigation);
         // В Qt 5.15 используем pageNavigation() вместо pageNavigator()
         connect(pdfView->pageNavigation(), &QPdfPageNavigation::currentPageChanged,
-                this, &PdfApp::onCurrentPageChanged);
+                this, &PdfPrinter::onCurrentPageChanged);
         // Подключаем сигналы радиокнопок к слоту
         // connect(orientation->portraitRadio, &QRadioButton::toggled, this, [this] {
         //     if (orientation->portraitRadio->isChecked()) {
@@ -1273,9 +1271,9 @@ private:
         //     createPdf_B();
         // });
         connect(orientation->portraitRadio, &QRadioButton::toggled, this,
-                &PdfApp::createPdf_B);
+                &PdfPrinter::createPdf_B);
         connect(orientation->landscapeRadio, &QRadioButton::toggled, this,
-                &PdfApp::createPdf_B);
+                &PdfPrinter::createPdf_B);
     }
 #ifdef debug_
     void loadPdfForView(const QString &fileName) {
@@ -1382,7 +1380,7 @@ void myMessageHandler(const QtMsgType type, const QMessageLogContext &context,
 int main(int argc, char *argv[]) {
     qInstallMessageHandler(myMessageHandler);
     QApplication app(argc, argv);
-    PdfApp window;
+    PdfPrinter window;
     window.show();
     return QApplication::exec();
 }
